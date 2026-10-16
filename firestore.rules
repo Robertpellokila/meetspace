@@ -1,0 +1,7 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Express Admin SDK performs all writes/reads. No direct client access.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

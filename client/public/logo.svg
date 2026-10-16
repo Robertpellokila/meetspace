@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MeetSpace logo</title>
+  <desc id="desc">Retro circular MeetSpace emblem with abstract meeting ribbons, record grooves, pink sparkle and golden edge.</desc>
+  <defs>
+    <clipPath id="disc"><circle cx="250" cy="248" r="222"/></clipPath>
+  </defs>
+  <circle cx="259" cy="259" r="224" fill="#FFC442"/>
+  <circle cx="250" cy="248" r="222" fill="#242B27"/>
+  <g clip-path="url(#disc)">
+    <!-- record grooves -->
+    <g fill="none" stroke="#F9EAD1" stroke-width="3.5" stroke-linecap="round">
+      <path d="M254 52 A196 196 0 0 1 443 228"/>
+      <path d="M258 70 A178 178 0 0 1 425 230"/>
+      <path d="M265 88 A158 158 0 0 1 406 230"/>
+      <path d="M56 244 A197 197 0 0 0 238 443"/>
+      <path d="M74 243 A177 177 0 0 0 238 425"/>
+      <path d="M92 244 A158 158 0 0 0 236 406"/>
+    </g>
+    <!-- two curving ribbons, referring to M and S / an open meeting circle -->
+    <path d="M110 134 C110 80 171 62 207 99 L251 142 C262 154 270 158 283 151 C308 138 341 147 358 168 C370 183 375 202 375 223 L375 244 C352 222 324 210 296 215 C276 218 260 231 244 245 C221 267 189 272 161 258 C129 242 110 214 110 180 Z" fill="#F9EAD1"/>
+    <path d="M399 307 C399 360 347 412 300 402 C285 399 274 388 258 375 C246 364 230 360 216 367 C173 388 126 363 113 321 C109 308 109 293 110 277 C134 301 160 312 188 307 C211 303 229 288 245 275 C269 253 299 245 330 258 C369 274 398 285 399 307 Z" fill="#F9EAD1"/>
+    <!-- centre badge -->
+    <circle cx="255" cy="255" r="68" fill="#FC5C77"/>
+    <path d="M255 213 C264 237 272 246 295 255 C272 264 264 273 255 297 C246 273 237 264 215 255 C237 246 246 237 255 213 Z" fill="#242B27"/>
+  </g>
+</svg>

@@ -1,0 +1,67 @@
+/* MeetSpace Retro Pop design tokens — load before global.css and component.css */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+  --color-primary: #59B292;
+  --color-secondary: #FFC94D;
+  --color-gold: #FFC94D;
+  --color-sand: #FAE7CB;
+  --color-accent-cream: #FAE7CB;
+  --color-accent-pink: #FA6781;
+
+  --bg-app: #FAE7CB;
+  --bg-surface: #FFF9EB;
+  --bg-elevated: #F7DBAC;
+  --bg-hover: #FCE3AA;
+  --text-primary: #292E29;
+  --text-secondary: #585D4B;
+  --border-color: #292E29;
+  --accent: #59B292;
+  --accent-hover: #469C7D;
+  --accent-text: #182A25;
+  --color-danger: #C33D5D;
+  --color-success: #287957;
+  --color-on-secondary: #292E29;
+  --shadow-color: #292E29;
+  --pattern-dot: rgba(41, 46, 41, 0.11);
+  --ring-color: rgba(89, 178, 146, 0.28);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --border-width: 2px;
+  --shadow-card: 6px 6px 0 var(--shadow-color);
+  --shadow-button: 3px 3px 0 var(--shadow-color);
+  --transition-theme: background-color 250ms ease, color 250ms ease, border-color 250ms ease, box-shadow 250ms ease;
+  --font-body: 'Nunito', 'Trebuchet MS', system-ui, sans-serif;
+  --font-display: 'Bree Serif', Georgia, serif;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --color-primary: #59B292;
+  --color-secondary: #FFC94D;
+  --color-gold: #FFC94D;
+  --color-sand: #FAE7CB;
+  --color-accent-cream: #FAE7CB;
+  --color-accent-pink: #FA6781;
+
+  --bg-app: #1C2825;
+  --bg-surface: #293832;
+  --bg-elevated: #38483F;
+  --bg-hover: #425448;
+  --text-primary: #FFF2D8;
+  --text-secondary: #D9C9AA;
+  --border-color: #E2C78E;
+  --accent: #59B292;
+  --accent-hover: #80D0AF;
+  --accent-text: #172620;
+  --color-danger: #FA6781;
+  --color-success: #80D0AF;
+  --color-on-secondary: #292E29;
+  --shadow-color: #0C1512;
+  --pattern-dot: rgba(255, 233, 187, 0.08);
+  --ring-color: rgba(255, 201, 77, 0.26);
+  --shadow-card: 6px 6px 0 var(--shadow-color);
+  --shadow-button: 3px 3px 0 var(--shadow-color);
+}
