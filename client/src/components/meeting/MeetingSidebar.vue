@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import HostApprovalsPanel from './HostApprovalsPanel.vue'
-const props = defineProps({ panel:{type:String,default:''}, participants:{type:Array,default:()=>[]}, messages:{type:Array,default:()=>[]}, roomId:String, isHost:Boolean, canModerate:Boolean, hostBusy:String, hostError:String, approvals:Object })
+const props = defineProps({ panel:{type:String,default:''}, participants:{type:Array,default:()=>[]}, messages:{type:Array,default:()=>[]}, canChat:{type:Boolean,default:true}, roomId:String, isHost:Boolean, canModerate:Boolean, hostBusy:String, hostError:String, approvals:Object })
 const emit = defineEmits(['close','send','moderate'])
 const orderedParticipants = computed(() => [...props.participants].sort((a,b) => Number(b.handRaised)-Number(a.handRaised)))
 const draft = ref('')
@@ -32,7 +32,7 @@ function send() { const value=draft.value.trim(); if (!value) return; emit('send
         <p v-if="!messages.length" class="muted">Say hello! Your room chat starts here.</p>
         <div v-for="msg in messages" :key="msg.id" class="ms-message"><b>{{ msg.sender }}</b><p>{{ msg.text }}</p></div>
       </div>
-      <form class="ms-chat-compose" @submit.prevent="send"><input v-model="draft" maxlength="1000" placeholder="Write a message..." aria-label="Chat message" /><button type="submit" :disabled="!draft.trim()">Send</button></form>
+      <form v-if="canChat" class="ms-chat-compose" @submit.prevent="send"><input v-model="draft" maxlength="1000" placeholder="Write a message..." aria-label="Chat message" /><button type="submit" :disabled="!draft.trim()">Send</button></form><p v-else class="ms-chat-disabled">Host menonaktifkan pengiriman chat peserta.</p>
     </template>
   </aside>
 </template>
@@ -45,6 +45,7 @@ function send() { const value=draft.value.trim(); if (!value) return; emit('send
 .ms-message { background:var(--bg-elevated);border-radius:10px;padding:9px 11px;margin-bottom:10px;overflow-wrap:anywhere; }.ms-message b{font-size:11px}.ms-message p{margin:5px 0 0;font-size:13px}.muted{font-size:13px;color:var(--text-secondary)}
 .ms-chat-compose { display:flex; gap:6px; padding:10px; border-top:2px solid var(--ms-line); }.ms-chat-compose input {width:100%;min-width:0;background:var(--bg-app); color:var(--text-primary); border:1px solid var(--border-color);border-radius:9px;padding:10px;}
 .ms-host-tools{display:grid;gap:8px;margin:18px 0 8px}.ms-host-tools small,.ms-person-status{font-size:11px;color:var(--text-secondary)}.ms-person-row{border-bottom:1px dashed var(--border-color);padding-bottom:12px}.ms-person-row .ms-person{border:0}.ms-person-status,.ms-person-controls{display:flex;gap:8px;flex-wrap:wrap}.ms-person-controls{margin-top:9px}.ms-person-controls button{font-size:11px}.ms-person-controls .ms-remove{background:var(--color-danger,#B64D4D);color:#fff}.ms-sidebar button:disabled{opacity:.5;cursor:not-allowed}.ms-control-error{color:var(--color-danger,#B64D4D);font-size:13px}
+.ms-chat-disabled{padding:12px;border-top:2px solid var(--ms-line);font-size:12px;color:var(--text-secondary)}
 </style>
 
 <style scoped>.ms-dot.speaking{background:#59b292;box-shadow:0 0 0 3px #59b29240}</style>

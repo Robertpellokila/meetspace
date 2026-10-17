@@ -66,6 +66,7 @@ const micEnabled = ref(false);
 const cameraEnabled = ref(false);
 const messages = ref([]);
 const isHost = ref(false);
+const isOwner = ref(false);
 const handBusy = ref(false);
 const hostBusy = ref("");
 const hostError = ref("");
@@ -74,6 +75,9 @@ const cameraBusy = ref(false);
 let disposed = false;
 let currentRoom = null;
 let offDisconnected = null;
+let roleTimer = null;
+let chatTimer = null;
+let chatCursor = 0;
 const livekitRoom = shallowRef(null);
 const livekitToken = live.token;
 const encoder = new TextEncoder();
@@ -82,15 +86,24 @@ const mode = computed(() => info.value?.mode || "professional");
 const activeLayout = computed(
   () => meetingLayouts[mode.value] || meetingLayouts.professional,
 );
-const features = computed(
-  () => roomModes[mode.value]?.features || roomModes.professional.features,
-);
+const features = computed(() => roomModes[mode.value]?.features || roomModes.professional.features);
+const chatAllowed = computed(() => mode.value !== 'professional' || isHost.value || info.value?.security?.allowChat !== false);
 const sharing = screen.isSharing;
 const shareBusy = screen.busy;
 const handRaised = computed(() =>
   participants.value.some((p) => p.isLocal && p.handRaised),
 );
-const canShare = computed(() => sharing.value || !screen.sharer.value);
+const canShare = computed(() => (sharing.value || !screen.sharer.value) && (isHost.value || mode.value !== 'professional' || info.value?.security?.allowScreenShare !== false));
+async function refreshRoleAndRoom() {
+  if (disposed || !connected.value) return;
+  try {
+    const [role, room] = await Promise.all([api.get(`/rooms/${roomId}/my-role`), api.get(`/rooms/${roomId}`)]);
+    if (disposed) return;
+    isHost.value = role.data.data.isHost === true;
+    isOwner.value = role.data.data.isOwner === true;
+    info.value = { ...info.value, ...room.data.data };
+  } catch { /* initial token and LiveKit disconnection remain authoritative */ }
+}
 const deviceEvents = [
   RoomEvent.LocalTrackPublished,
   RoomEvent.LocalTrackUnpublished,
@@ -108,10 +121,16 @@ function refreshDevices() {
   meeting.sharingScreen = Boolean(local.isScreenShareEnabled);
   sync();
 }
-function addMessage(raw, participant) {
+function addMessage(raw, participant, _kind, topic) {
   try {
-    if (!participant || raw.byteLength > 8192) return;
+    if (raw.byteLength > 8192) return;
     const message = JSON.parse(decoder.decode(raw));
+    if (!participant && topic === 'meetspace.chat.v1' && message.type === 'chat' && message.message?.id) {
+      if (!messages.value.some((item) => item.id === message.message.id))
+        messages.value = [...messages.value.slice(-199), message.message];
+      return;
+    }
+    if (!participant) return;
     if (message.type === "reaction" && features.value.reactions) {
       showReaction(
         message.emoji,
@@ -120,16 +139,27 @@ function addMessage(raw, participant) {
       );
       return;
     }
-    if (message.type !== "chat" || typeof message.text !== "string") return;
-    messages.value.push({
-      id: crypto.randomUUID(),
-      sender: participant?.name || "Guest",
-      text: message.text.slice(0, 1000),
-    });
-    if (messages.value.length > 200) messages.value.shift();
+    // Chat packets from participants are ignored. Only the API relay may send chat.
   } catch {
     /* ignore other LiveKit data payloads */
   }
+}
+function approvalCredentials() {
+  try { return JSON.parse(sessionStorage.getItem(`meetspace:approval:${roomId}`) || '{}') || {} }
+  catch { return {} }
+}
+async function loadMessages() {
+  if (disposed || !connected.value) return;
+  try {
+    const credentials = approvalCredentials();
+    const response = await api.get(`/rooms/${roomId}/chat`, { params: chatCursor ? { after: chatCursor } : {}, headers: { 'x-meetspace-request-id': credentials.requestId, 'x-meetspace-guest-secret': credentials.guestSecret } });
+    if (disposed) return;
+    const incoming = response.data.data || [];
+    chatCursor = Math.max(chatCursor, ...incoming.map((message) => message.createdAt));
+    const combined = new Map((chatCursor && messages.value.length ? messages.value : []).map((message) => [message.id, message]));
+    incoming.forEach((message) => combined.set(message.id, message));
+    messages.value = [...combined.values()].sort((a, b) => a.createdAt - b.createdAt).slice(-200);
+  } catch { /* LiveKit messages still arrive during a brief API outage */ }
 }
 function showReaction(emoji, identity, name) {
   if (
@@ -201,15 +231,16 @@ async function moveRoom(destination) {
     moving = false;
   }
 }
-async function endMeeting() {
-  if (!isHost.value || hostBusy.value) return;
+async function endMeeting(permanent = false) {
+  if (!isOwner.value || hostBusy.value) return;
   hostBusy.value = "end";
   try {
-    await api.post(`/rooms/${encodeURIComponent(roomId)}/end`);
+    const recurring = info.value?.schedule?.repeat === 'weekly' && !permanent;
+    await api.post(`/rooms/${encodeURIComponent(roomId)}/${recurring ? 'end-session' : 'end'}`);
     disposed = true;
     await cleanup();
     await router.push("/account");
-    toast.success("Room sudah diakhiri untuk semua peserta.");
+    toast.success(recurring ? 'Sesi berakhir. Link room siap dipakai minggu depan.' : 'Room sudah diakhiri untuk semua peserta.');
   } catch (error) {
     toast.error(error);
   } finally {
@@ -220,20 +251,13 @@ async function toggleRecording() {
   if (isHost.value) await recorder.toggle();
 }
 async function sendMessage(text) {
-  if (!currentRoom || !features.value.chat) return;
+  if (!currentRoom || !features.value.chat || !chatAllowed.value) return;
   const clean = text.trim().slice(0, 1000);
   if (!clean) return;
   try {
-    const payload = encoder.encode(
-      JSON.stringify({ type: "chat", text: clean }),
-    );
-    await currentRoom.localParticipant.publishData(payload, { reliable: true });
-    messages.value.push({
-      id: crypto.randomUUID(),
-      sender: "You",
-      text: clean,
-    });
-    if (messages.value.length > 200) messages.value.shift();
+    const response = await api.post(`/rooms/${roomId}/chat`, { ...approvalCredentials(), text: clean });
+    if (!messages.value.some((item) => item.id === response.data.data.id))
+      messages.value = [...messages.value.slice(-199), response.data.data];
   } catch (e) {
     error.value = e;
   }
@@ -259,8 +283,12 @@ async function start() {
     info.value = result.room;
     roomTimer.startMeetingTimer(result.room?.startedAt, result.clock);
     isHost.value = result.isHost === true;
+    isOwner.value = result.isOwner === true;
     meeting.setRoom(result.room);
     connected.value = true;
+    roleTimer = setInterval(refreshRoleAndRoom, 5000);
+    void loadMessages();
+    chatTimer = setInterval(loadMessages, 15_000);
     meeting.connected = true;
     participantState.attach(currentRoom);
     network.attach(currentRoom);
@@ -293,7 +321,7 @@ async function start() {
     if (disposed || !currentRoom) return;
     try {
       await currentRoom.localParticipant.setMicrophoneEnabled(
-        prefs.micEnabled === true,
+        prefs.micEnabled === true && !(mode.value === 'professional' && !isHost.value && info.value?.security?.muteOnEntry),
       );
     } catch (e) {
       error.value = e;
@@ -390,6 +418,11 @@ async function leave() {
   await router.push({ name: "lobby", params: { roomId } });
 }
 async function cleanup() {
+  clearInterval(roleTimer);
+  roleTimer = null;
+  clearInterval(chatTimer);
+  chatTimer = null;
+  chatCursor = 0;
   roomTimer.stop();
   reactionTimers.forEach(clearTimeout);
   reactionTimers.clear();
@@ -413,9 +446,20 @@ async function cleanup() {
   meeting.reset();
   await live.leave();
 }
-onMounted(start);
+function onShortcut(event) {
+  if (!connected.value || !event.altKey || event.ctrlKey || event.metaKey || event.repeat || ['INPUT','TEXTAREA','SELECT'].includes(event.target?.tagName) || event.target?.isContentEditable) return;
+  const key = event.key.toLowerCase();
+  if (!['m','v','s','h'].includes(key)) return;
+  event.preventDefault();
+  if (key === 'm') void toggleMic();
+  if (key === 'v') void toggleCamera();
+  if (key === 's') void toggleShare();
+  if (key === 'h') void toggleHand();
+}
+onMounted(() => { window.addEventListener('keydown', onShortcut); void start(); });
 onBeforeUnmount(() => {
   disposed = true;
+  window.removeEventListener('keydown', onShortcut);
   void cleanup();
 });
 useErrorToast(error, hostError);
@@ -438,7 +482,9 @@ useErrorToast(error, hostError);
     :participants="participants"
     :messages="messages"
     :features="features"
+    :chat-allowed="chatAllowed"
     :is-host="isHost"
+    :is-owner="isOwner"
     :host-busy="hostBusy"
     :host-error="hostError"
     :hand-raised="handRaised"

@@ -1,23 +1,25 @@
 import { test, before, beforeEach, after, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import express from 'express'
-import { AccessToken, TrackSource } from 'livekit-server-sdk'
+import { AccessToken, TrackSource, DataPacket_Kind } from 'livekit-server-sdk'
 
 const roomId = '11111111-1111-4111-8111-111111111111'
 const requestId = '22222222-2222-4222-8222-222222222222'
 import {records,db,adminAuth} from '../testing/firestore.js'
 const calls = []
 let people = []
+const childPeople = new Map()
 let removalFails = false
 const roomPath = `rooms/${roomId}`
 const requestPath = `${roomPath}/joinRequests/${requestId}`
 mock.module('../src/config/firebase.js', { namedExports:{db,adminAuth} })
-mock.module('livekit-server-sdk', { namedExports:{AccessToken,TrackSource,RoomServiceClient:class {
+mock.module('livekit-server-sdk', { namedExports:{AccessToken,TrackSource,DataPacket_Kind,RoomServiceClient:class {
   async deleteRoom(id){calls.push(['delete',id]);if(removalFails)throw Error('Simulated outage')}
   async getParticipant(_room, identity) {return people.find(p=>p.identity===identity)}
-  async listParticipants() {return people}
+  async listParticipants(room) {return childPeople.get(room) ?? people}
   async mutePublishedTrack(...args) {calls.push(['mute',...args])}
   async updateParticipant(...args) {calls.push(['update',...args])}
+  async sendData(...args) {calls.push(['sendData',...args])}
   async removeParticipant(...args) {
     assert.equal(records.get(requestPath).status,'revoked','approval must be revoked before disconnect')
     if(removalFails)throw Error('Simulated provider outage')
@@ -37,7 +39,7 @@ before(async()=>{
 })
 after(async()=>{await new Promise(resolve=>server.close(resolve))})
 beforeEach(()=>{
-  records.clear();calls.length=0;removalFails=false
+  records.clear();calls.length=0;childPeople.clear();removalFails=false
   records.set('accounts/owner',{uid:'owner',access:'full'})
   records.set(roomPath,{id:roomId,name:'Professional test',mode:'professional',theme:'midnight',hostUid:'owner',status:'active'})
   people=[
@@ -45,8 +47,8 @@ beforeEach(()=>{
     {identity:`guest-${requestId}`,tracks:[{sid:'guest-mic',source:TrackSource.MICROPHONE},{sid:'screen-audio',source:TrackSource.SCREEN_SHARE_AUDIO},{sid:'camera',source:TrackSource.CAMERA}]},
   ]
 })
-async function request(path='',{method='GET',user,body,secret}={}) {
-  const response=await fetch(`${base}${path}`,{method,headers:{'Content-Type':'application/json',...(user?{Authorization:`Bearer ${user}`} : {}),...(secret?{'x-meetspace-guest-secret':secret}:{})},body:body?JSON.stringify(body):undefined})
+async function request(path='',{method='GET',user,body,secret,approvalId}={}) {
+  const response=await fetch(`${base}${path}`,{method,headers:{'Content-Type':'application/json',...(user?{Authorization:`Bearer ${user}`} : {}),...(secret?{'x-meetspace-guest-secret':secret}:{}),...(approvalId?{'x-meetspace-request-id':approvalId}:{})},body:body?JSON.stringify(body):undefined})
   return {status:response.status,body:await response.json()}
 }
 const actionPath=`/${roomId}/participants/guest-${requestId}/actions`
@@ -96,6 +98,135 @@ test('host token uses the lobby name, keeps email private, and omits client admi
   assert.notEqual(claims.video.roomAdmin,true)
   assert.equal(response.body.data.room.hostUid,undefined)
 })
+test('weekly meeting keeps its link, exports a reminder, and resets the shared session clock',async()=>{
+  const startsAt=Date.now()+60*60_000
+  const created=await request('',{method:'POST',user:'owner',body:{name:'Weekly review',mode:'professional',theme:'focus',schedule:{startsAt,durationMinutes:45,repeat:'weekly',timezone:'Asia/Makassar'}}})
+  assert.equal(created.status,201)
+  const id=created.body.data.id, code=created.body.data.meetingId
+  const ics=await fetch(`${base}/${id}/calendar.ics`)
+  assert.equal(ics.status,200)
+  const calendar=await ics.text()
+  assert.match(calendar,/RRULE:FREQ=WEEKLY/)
+  assert.match(calendar,/TRIGGER:-PT15M/)
+  assert.match(calendar,new RegExp(id))
+  assert.equal((await request(`/${id}/token`,{method:'POST',user:'owner'})).status,200)
+  const initial=records.get(`rooms/${id}`).startedAt
+  assert.ok(initial)
+  assert.equal((await request(`/${id}/end-session`,{method:'POST',user:'other'})).status,403)
+  assert.equal((await request(`/${id}/end-session`,{method:'POST',user:'owner'})).status,200)
+  assert.equal(records.get(`rooms/${id}`).status,'active')
+  assert.equal(records.get(`rooms/${id}`).startedAt,null)
+  assert.equal((await request(`/by-code/${code}`)).status,200)
+  assert.equal((await request(`/${id}/token`,{method:'POST',user:'owner'})).status,200)
+  assert.ok(records.get(`rooms/${id}`).startedAt)
+})
+test('Security locks admission and an approved pending account can become room-scoped co-host',async()=>{
+  const anonymous=await request(`/${roomId}/join-requests`,{method:'POST',body:{participantName:'Anonymous'}})
+  await request(`/${roomId}/join-requests/${anonymous.body.data.requestId}`,{method:'PATCH',user:'owner',body:{status:'approved'}})
+  const anonymousPromotion=await request(`/${roomId}/cohosts/guest-${anonymous.body.data.requestId}`,{method:'POST',user:'owner',body:{grant:true}})
+  assert.equal(anonymousPromotion.status,403)
+  assert.match(anonymousPromotion.body.message,/login/)
+  const admission=await request(`/${roomId}/join-requests`,{method:'POST',user:'other',body:{participantName:'Teammate'}})
+  const guest=admission.body.data
+  await request(`/${roomId}/join-requests/${guest.requestId}`,{method:'PATCH',user:'owner',body:{status:'approved'}})
+  assert.equal((await request('',{method:'POST',user:'other',body:{name:'Forbidden',mode:'professional',theme:'focus'}})).status,403)
+  const security=await request(`/${roomId}/security`,{method:'PATCH',user:'owner',body:{allowScreenShare:false,locked:true}})
+  assert.equal(security.status,200)
+  assert.ok(calls.some((call)=>call[0]==='mute' && call[3]==='screen-audio'))
+  assert.equal((await request(`/${roomId}/join-requests`,{method:'POST',body:{participantName:'Late'}})).status,423)
+  const guestToken=await request(`/${roomId}/token`,{method:'POST',body:guest})
+  assert.equal(guestToken.status,403,'a guest who never joined cannot bypass a new lock')
+  assert.equal((await request(`/${roomId}/security`,{method:'PATCH',user:'owner',body:{locked:false}})).status,200)
+  const openToken=await request(`/${roomId}/token`,{method:'POST',body:guest})
+  const claims=JSON.parse(Buffer.from(openToken.body.data.token.split('.')[1],'base64url'))
+  assert.equal(claims.video.canPublishSources.includes(TrackSource.SCREEN_SHARE),false)
+  assert.equal((await request(`/${roomId}/cohosts/guest-${guest.requestId}`,{method:'POST',user:'owner',body:{grant:true}})).status,200)
+  assert.equal((await request(`/${roomId}/my-role`,{user:'other'})).body.data.isHost,true)
+  assert.equal((await request(`/${roomId}/join-requests`,{user:'other'})).status,200)
+  assert.equal((await request(`/${roomId}/mute-all`,{method:'POST',user:'other'})).status,200)
+  const cohostToken=await request(`/${roomId}/token`,{method:'POST',user:'other',body:guest})
+  assert.equal(cohostToken.body.data.isHost,true)
+  assert.equal(cohostToken.body.data.isOwner,false)
+  const cohostClaims=JSON.parse(Buffer.from(cohostToken.body.data.token.split('.')[1],'base64url'))
+  assert.equal(cohostClaims.attributes['meetspace.coHost'],'true')
+  records.get(`${roomPath}/joinRequests/${guest.requestId}`).expiresAt=Date.now()-1
+  assert.equal((await request(`/${roomId}/my-role`,{user:'other'})).body.data.isHost,false)
+  assert.equal((await request(`/${roomId}/mute-all`,{method:'POST',user:'other'})).status,403)
+  records.get(`${roomPath}/joinRequests/${guest.requestId}`).expiresAt=Date.now()+60_000
+  assert.equal((await request(`/${roomId}/cohosts/guest-${guest.requestId}`,{method:'POST',user:'owner',body:{grant:false}})).status,200)
+  assert.equal((await request(`/${roomId}/my-role`,{user:'other'})).body.data.isHost,false)
+})
+test('facilitator can create a poll and breakout assignment without allowing repeat votes',async()=>{
+  const admission=await request(`/${roomId}/join-requests`,{method:'POST',body:{participantName:'Voter'}})
+  const guest=admission.body.data
+  await request(`/${roomId}/join-requests/${guest.requestId}`,{method:'PATCH',user:'owner',body:{status:'approved'}})
+  const poll=await request(`/${roomId}/polls`,{method:'POST',user:'owner',body:{question:'Which topic next?',options:['Planning','Review']}})
+  assert.equal(poll.status,201)
+  const pollPath=`/${roomId}/polls/${poll.body.data.id}`
+  assert.equal((await request(pollPath,{method:'PATCH',user:'other',body:{status:'open'}})).status,403)
+  assert.equal((await request(pollPath,{method:'PATCH',user:'owner',body:{status:'open'}})).status,200)
+  assert.equal((await request(`${pollPath}/vote`,{method:'POST',body:{...guest,option:1}})).status,200)
+  assert.equal((await request(`${pollPath}/vote`,{method:'POST',body:{...guest,option:0}})).status,409)
+  assert.deepEqual((await request(`/${roomId}/polls`,{user:'owner'})).body.data[0].counts,[0,1])
+  assert.equal((await request(`/${roomId}/polls`,{secret:guest.guestSecret,approvalId:guest.requestId})).body.data[0].voted,true)
+  const child=(await request(`/${roomId}/breakouts`,{method:'POST',user:'owner',body:{count:1}})).body.data[0]
+  childPeople.set(child.id,[{identity:`guest-${guest.requestId}`,name:'Voter'},{identity:'host-owner',name:'Host'}])
+  const cohostAdmission=await request(`/${roomId}/join-requests`,{method:'POST',user:'other',body:{participantName:'Facilitator'}})
+  const cohost=cohostAdmission.body.data
+  await request(`/${roomId}/join-requests/${cohost.requestId}`,{method:'PATCH',user:'owner',body:{status:'approved'}})
+  assert.equal((await request(`/${roomId}/cohosts/guest-${cohost.requestId}`,{method:'POST',user:'owner',body:{grant:true}})).status,200)
+  assert.equal((await request(`/${roomId}/breakouts/${child.id}/assign`,{method:'POST',user:'other',body:{identity:`guest-${guest.requestId}`}})).status,200)
+  const list=await request(`/${roomId}/breakouts`,{secret:guest.guestSecret,approvalId:guest.requestId})
+  assert.equal(list.body.meta.assignedRoomId,child.id)
+  assert.ok(list.body.meta.assignmentKey)
+  assert.equal(list.body.meta.assignments,undefined,'regular participants cannot read other assignments')
+  assert.equal((await request(`/${roomId}/breakouts/${child.id}/assign`,{method:'POST',user:'other',body:{identity:`guest-${guest.requestId}`}})).status,200)
+  assert.notEqual((await request(`/${roomId}/breakouts`,{secret:guest.guestSecret,approvalId:guest.requestId})).body.meta.assignmentKey,list.body.meta.assignmentKey)
+  const moderatorList=await request(`/${roomId}/breakouts`,{user:'other',secret:cohost.guestSecret,approvalId:cohost.requestId})
+  assert.equal(moderatorList.body.meta.assignments[`guest-${guest.requestId}`],child.id)
+  const roster=await request(`/${roomId}/breakouts?include=participants`,{user:'other',secret:cohost.guestSecret,approvalId:cohost.requestId})
+  assert.deepEqual(roster.body.data[0].participants,[{identity:`guest-${guest.requestId}`,name:'Voter'},{identity:'host-owner',name:'Host'}])
+  const privateRoster=await request(`/${roomId}/breakouts?include=participants`,{secret:guest.guestSecret,approvalId:guest.requestId})
+  assert.equal(privateRoster.body.data[0].participants,undefined)
+  assert.equal((await request(`/${roomId}/breakouts/${child.id}/assign`,{method:'POST',user:'other',body:{identity:'host-owner'}})).status,200)
+  assert.equal((await request(`/${roomId}/breakouts`,{user:'owner'})).body.meta.assignedRoomId,child.id)
+  assert.equal((await request(`/${roomId}/breakouts/${child.id}/join`,{method:'POST',user:'owner'})).body.data.roomId,child.id)
+  assert.equal((await request(`/${roomId}/breakouts/${child.id}/assign`,{method:'POST',user:'admin',body:{identity:`guest-${guest.requestId}`}})).status,403)
+  assert.equal((await request(`/${roomId}/breakouts/timer`,{method:'PATCH',user:'owner',body:{minutes:10}})).status,200)
+  assert.ok((await request(`/${roomId}/breakouts`,{user:'owner'})).body.meta.deadlineAt>Date.now())
+  assert.equal((await request(`/${roomId}/breakouts/notice`,{method:'POST',user:'owner',body:{text:'Five minutes remaining'}})).status,200)
+  const moved=await request(`/${roomId}/breakouts/${child.id}/join`,{method:'POST',body:guest})
+  const childCredential=moved.body.data
+  const context=await request(`/${child.id}/breakouts/context`,{secret:childCredential.guestSecret,approvalId:childCredential.requestId})
+  assert.equal(context.body.data.notice.text,'Five minutes remaining')
+  const second=(await request(`/${roomId}/breakouts`,{method:'POST',user:'owner',body:{count:1}})).body.data[0]
+  assert.equal((await request(`/${roomId}/breakouts/${second.id}/assign`,{method:'POST',user:'other',body:{identity:`guest-${guest.requestId}`}})).status,200)
+  const reassigned=await request(`/${child.id}/breakouts/context`,{secret:childCredential.guestSecret,approvalId:childCredential.requestId})
+  assert.equal(reassigned.body.data.assignedRoomId,second.id)
+  assert.equal(reassigned.body.data.assignedRoomName,second.name)
+  assert.equal((await request(`/${roomId}/breakouts/${second.id}/join`,{method:'POST',body:guest})).body.data.roomId,second.id)
+  assert.equal((await request(`/${child.id}/breakouts/help`,{method:'POST',body:childCredential})).status,200)
+  assert.equal((await request(`/${roomId}/breakouts/help`,{user:'owner'})).body.data[0].participantName,'Voter')
+})
+test('chat is relayed by the server and the Security toggle blocks guest sends',async()=>{
+  const admission=await request(`/${roomId}/join-requests`,{method:'POST',body:{participantName:'Speaker'}})
+  const guest=admission.body.data
+  assert.equal((await request(`/${roomId}/chat`,{method:'POST',body:{text:'forged'}})).status,403)
+  await request(`/${roomId}/join-requests/${guest.requestId}`,{method:'PATCH',user:'owner',body:{status:'approved'}})
+  assert.ok(records.get(`${roomPath}/joinRequests/${guest.requestId}`).expiresAt>Date.now()+11*60*60_000)
+  const sent=await request(`/${roomId}/chat`,{method:'POST',body:{...guest,text:'Hello team'}})
+  assert.equal(sent.status,201)
+  assert.equal(sent.body.data.sender,'Speaker')
+  assert.equal((await request(`/${roomId}/chat`,{method:'POST',body:{...guest,text:'too fast'}})).status,429)
+  assert.ok(calls.some((call)=>call[0]==='sendData' && call[3]===DataPacket_Kind.RELIABLE && call[4].topic==='meetspace.chat.v1'))
+  const history=await request(`/${roomId}/chat`,{secret:guest.guestSecret,approvalId:guest.requestId})
+  assert.equal(history.body.data[0].text,'Hello team')
+  const incremental=await request(`/${roomId}/chat?after=${sent.body.data.createdAt}`,{secret:guest.guestSecret,approvalId:guest.requestId})
+  assert.equal(incremental.body.data[0].id,sent.body.data.id)
+  assert.equal((await request(`/${roomId}/security`,{method:'PATCH',user:'owner',body:{allowChat:false}})).status,200)
+  assert.equal((await request(`/${roomId}/chat`,{method:'POST',body:{...guest,text:'blocked'}})).status,403)
+  assert.equal((await request(`/${roomId}/chat`,{method:'POST',user:'owner',body:{text:'Host announcement'}})).status,201)
+})
 test('expired admissions cannot be approved and do not fill the waiting room',async()=>{
   seedGuest('pending');records.get(requestPath).expiresAt=Date.now()-1
   const list=await request(`/${roomId}/join-requests`,{user:'owner'})
@@ -135,6 +266,16 @@ test('remove revokes approval before disconnecting and can retry provider failur
   assert.equal(calls[0][0],'remove')
   assert.equal(typeof calls[0][3].revokeTokenTs,'bigint')
 })
+test('removing a co-host also revokes moderator access on the API',async()=>{
+  seedGuest()
+  records.get(requestPath).userUid='other'
+  records.get(roomPath).coHostUids=['other']
+  records.get(roomPath).coHostRequestIds=[requestId]
+  assert.equal((await request(`/${roomId}/my-role`,{user:'other'})).body.data.isHost,true)
+  assert.equal((await request(actionPath,{method:'POST',user:'owner',body:{action:'remove'}})).status,200)
+  assert.equal((await request(`/${roomId}/my-role`,{user:'other'})).body.data.isHost,false)
+  assert.equal((await request(`/${roomId}/mute-all`,{method:'POST',user:'other'})).status,403)
+})
 test('malformed identifiers and closed rooms fail without database path traversal',async()=>{
   assert.equal((await request('/invalid')).status,400)
   assert.equal((await request(`/${roomId}/token`,{method:'POST',body:{requestId:'x/y',guestSecret:'a'.repeat(64)}})).status,403)
@@ -147,6 +288,7 @@ test('new accounts can request admission but cannot create rooms or mint host to
   records.delete('accounts/owner')
   assert.equal((await request('',{method:'POST',user:'owner',body:{name:'Denied',mode:'professional',theme:'focus'}})).status,403)
   assert.equal((await request(`/${roomId}/token`,{method:'POST',user:'owner'})).status,403)
+  assert.equal((await request(`/${roomId}/cohosts/guest-${requestId}`,{method:'POST',user:'owner',body:{grant:true}})).status,403)
   assert.equal((await request(`/${roomId}/join-requests`,{method:'POST',user:'other',body:{participantName:'New member'}})).status,201)
 })
 test('breakouts enforce owner, admission, capacity and parent room binding',async()=>{

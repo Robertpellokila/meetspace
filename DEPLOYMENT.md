@@ -30,7 +30,7 @@ Dokumen ini merupakan petunjuk, bukan bukti aplikasi sudah dipublikasikan. Conto
 | --- | --- | --- | --- |
 | A — langkah awal yang disarankan | Vercel, root `client` | Vercel, root `server` | Dua project dari satu repository; perubahan konfigurasi kecil |
 | B — menggunakan Cloudflare untuk website | Cloudflare Pages, root `client` | Vercel, root `server` | Frontend tetap Vue/Vite, backend tetap Node.js |
-| C — website dan API di Cloudflare | Pages/Workers Static Assets | Workers atau Containers | Memerlukan pekerjaan tambahan; lihat bagian 14 |
+| C — website dan API di Cloudflare | Cloudflare Pages, root `client` | Cloudflare Workers, root `server` | Setup dan langkah validasi di [CLOUDFLARE_DEPLOY.md](./CLOUDFLARE_DEPLOY.md) |
 
 Pilihan A dan B tetap menggunakan **Firebase Authentication + Firestore + LiveKit**. Hosting frontend tidak menggantikan database atau server media.
 
@@ -570,26 +570,11 @@ Tidak ada jaminan seluruh kombinasi layanan selalu gratis. Periksa paket, kuota,
 
 ## 14. Jika ingin backend juga di Cloudflare
 
-Cloudflare Pages pada jalur B hanya menerbitkan frontend. `npm start` Express bukan build command Pages.
-
-Cloudflare Workers memiliki dukungan API Node dan adaptor HTTP seperti `httpServerHandler`, sehingga bukan berarti Express sama sekali tidak bisa dijalankan di Workers. Namun kompatibilitas adaptor HTTP tidak membuktikan seluruh dependency Firebase Admin/Firestore project ini langsung berjalan. [Node HTTP pada Workers](https://developers.cloudflare.com/workers/runtime-apis/nodejs/http/)
-
-Project ini belum memiliki entrypoint Workers, konfigurasi Wrangler, atau pengujian deployment Firebase Admin pada runtime Workers. Untuk jalur API Workers, pekerjaan berikut masih diperlukan:
-
-1. Tentukan entrypoint Worker dan cara menghubungkan handler Express tanpa menggandakan route bisnis.
-2. Tentukan compatibility date/flags, pengelolaan environment, dan secrets.
-3. Uji verifikasi Firebase token, kredensial, akses Firestore, transaksi, agregasi dashboard, dan koneksi yang digunakan SDK.
-4. Uji pembuatan token LiveKit, host controls, dan verifikasi webhook dengan body asli.
-5. Jika ada dependency yang tidak kompatibel, adaptasi integrasinya atau gunakan runtime Node melalui layanan/container yang sesuai.
-6. Ulangi seluruh pengujian bagian 10 sebelum memindahkan trafik.
-
-Cloudflare Containers merupakan jalur lain untuk runtime container, tetapi memerlukan Dockerfile, konfigurasi layanan, dan penilaian biaya/operasional tersendiri. Panduan ini tidak mengklaim migrasi Workers/Containers tersebut sudah selesai. [Cloudflare Containers](https://developers.cloudflare.com/containers/)
-
-Untuk deployment awal dengan penggunaan ulang kode paling langsung, pilih **jalur A** atau **jalur B**. Jalur B tetap memberi hosting frontend di Cloudflare tanpa memaksa migrasi backend bersamaan.
+Jalur C sekarang memiliki entrypoint Worker, konfigurasi Wrangler, dan adapter Firestore REST yang menggunakan routes Express yang sama. Ikuti [panduan Cloudflare Pages + Workers](./CLOUDFLARE_DEPLOY.md) setelah push ke GitHub `main`. Panduan itu mencakup secret, domain, Firebase, LiveKit, dan pengujian production. Runtime Firestore serta LiveKit dengan kredensial asli tetap harus diuji sesudah deploy.
 
 ## 15. Checklist singkat
 
-- [ ] Pilih A (Vercel + Vercel) atau B (Pages + Vercel).
+- [ ] Pilih A (Vercel + Vercel), B (Pages + Vercel), atau C (Pages + Workers, panduan terpisah).
 - [ ] Repository berisi source dan lockfile; tidak berisi `.env` atau kredensial.
 - [ ] Firebase Web dan Admin menggunakan project yang sama.
 - [ ] Email/Password aktif dan Firestore `(default)` tersedia.
@@ -664,3 +649,39 @@ pertanyaan dari dashboard admin, lalu mulai **game baru** untuk melihat perubaha
 Sesi yang sedang berjalan mempertahankan bank soal saat game dimulai. Untuk game
 web, ganti URL demo terlebih dahulu; memilih iframe memerlukan izin embed dari
 situs pemilik game. Game browser eksternal tidak otomatis menjadi multiplayer.
+
+## Jadwal dan fasilitasi Professional
+
+Deploy ulang **backend dan frontend** bersama. Fitur ini tidak menambah environment
+variable atau langkah migrasi Firestore. `CLIENT_ORIGIN` backend harus menunjuk ke
+domain frontend yang benar karena undangan kalender `.ics` membangun link Lobby
+dari nilai tersebut. Kalender yang diimpor menyediakan pengingat 15 menit; toast
+di halaman akun hanya aktif ketika halaman akun terbuka.
+
+Periksa alur berikut dengan satu akun host berakses penuh dan satu akun peserta
+berstatus menunggu akses penuh di dua browser/profil terpisah:
+
+- [ ] Buat Professional Room mingguan, unduh `.ics`, periksa waktu lokal,
+  pengulangan, reminder, dan link Lobby pada kalender.
+- [ ] Akhiri **sesi** mingguan; peserta terputus, timer sesi berikutnya mulai dari
+  awal, dan Meeting ID/link lama tetap berfungsi. **Tutup room permanen** pada
+  room mingguan atau **End all** pada room sekali pakai menutup link.
+- [ ] Jadikan peserta berakun yang sudah disetujui sebagai co-host; ia dapat
+  menyetujui tamu dan moderasi tanpa akses penuh admin, tetapi tidak dapat
+  membuat room sendiri atau mengakhiri room. Cabut peran lalu ulangi aksi.
+- [ ] Kunci meeting dan coba request baru; matikan izin share peserta ketika
+  peserta sudah terhubung, lalu coba share dari browser peserta. Matikan chat,
+  pastikan peserta masih bisa membaca pesan host tetapi tidak dapat mengirim.
+- [ ] Share tab dengan opsi audio browser, coba anotasi presenter, dan buka
+  whiteboard Professional. Audio sistem/tab bergantung dukungan browser dan
+  sumber yang dipilih dalam dialog berbagi.
+- [ ] Buka polling, kirim satu suara dari peserta, pastikan suara kedua ditolak,
+  lalu tutup polling. Dari akun host dan co-host, tugaskan peserta ke breakout;
+  pastikan target menerima modal **Masuk kelompok / Batal**, dan host melihat
+  nama peserta yang sudah masuk pada tiap kartu ruang.
+  Kirim pengumuman, minta bantuan dari breakout, dan tunggu timer kembali ke room utama.
+
+Chat Professional kini melalui API sehingga toggle **Izinkan chat** menolak
+pengiriman pesan peserta di server. Whiteboard, reactions, dan soundboard tetap
+memakai kanal data LiveKit. Tambahkan TTL Firestore untuk field
+collection group `chatMessages`, field `expiresAt` (24 jam), agar dokumen chat lama dibersihkan.

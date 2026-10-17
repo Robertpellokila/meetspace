@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-const props = defineProps({ waitingCount:{type:Number,default:0}, micEnabled:Boolean, cameraEnabled:Boolean, micBusy:Boolean, cameraBusy:Boolean, sharing:Boolean, shareBusy:Boolean, handRaised:Boolean, handBusy:Boolean, isHost:Boolean, professional:Boolean, recording:Boolean, recordBusy:Boolean, features:{type:Object,default:()=>({})}, panel:{type:String,default:''}, canShare:{type:Boolean,default:true} })
+const props = defineProps({ waitingCount:{type:Number,default:0}, micEnabled:Boolean, cameraEnabled:Boolean, micBusy:Boolean, cameraBusy:Boolean, sharing:Boolean, shareBusy:Boolean, handRaised:Boolean, handBusy:Boolean, isHost:Boolean, isOwner:Boolean, recurring:Boolean, professional:Boolean, recording:Boolean, recordBusy:Boolean, features:{type:Object,default:()=>({})}, panel:{type:String,default:''}, canShare:{type:Boolean,default:true} })
 const emit = defineEmits(['mic','camera','share','hand','panel','leave','audio','record','end'])
 const btns = computed(() => [
   {id:'mic',label:props.micEnabled?'Mute':'Unmute',icon:props.micEnabled?'🎙':'🔇'},
@@ -18,11 +18,13 @@ const btns = computed(() => [
       <button v-if="features.reactions" class="ms-tool" :class="{chosen:panel==='reactions'}" @click="emit('panel','reactions')"><span>♡</span><small>React</small></button>
       <button class="ms-tool" :class="{chosen:panel==='sounds'}" @click="emit('panel','sounds')"><span>♫</span><small>Sound FX</small></button>
       <button v-if="professional" class="ms-tool" :class="{chosen:panel==='breakouts'}" @click="emit('panel','breakouts')"><span>▦</span><small>Breakout</small></button>
+      <button v-if="professional" class="ms-tool" :class="{chosen:panel==='polls'}" @click="emit('panel','polls')"><span>▤</span><small>Polling</small></button>
+      <button v-if="professional && isHost" class="ms-tool" :class="{chosen:panel==='security'}" @click="emit('panel','security')"><span>♙</span><small>Security</small></button>
       <button v-if="isHost" class="ms-tool" :class="{chosen:recording}" :disabled="recordBusy" :aria-pressed="recording" title="Rekam tab atau layar yang kamu pilih; file disimpan lokal" @click="emit('record')"><span>{{recording?'■':'◉'}}</span><small>{{recording?'Stop record':'Record'}}</small></button>
       <button class="ms-tool" :class="{chosen:panel==='tools'}" @click="emit('panel','tools')"><span>⚙</span><small>Tools</small></button>
       <button class="ms-tool" @click="emit('audio')"><span>♫</span><small>Enable audio</small></button>
       <button class="ms-tool danger" @click="emit('leave')"><span>☎</span><small>Leave</small></button>
-      <button v-if="isHost" class="ms-tool danger" @click="emit('end')"><span>×</span><small>End all</small></button>
+      <button v-if="isOwner" class="ms-tool danger" @click="emit('end')"><span>×</span><small>{{recurring?'End session':'End all'}}</small></button>
     </div>
   </footer>
 </template>

@@ -22,7 +22,8 @@ export function useParticipants() {
     const people = [room.localParticipant, ...room.remoteParticipants.values()]
     participants.value = people.map(p => ({
       id: p.identity, name: p.name || 'Guest', isLocal: p === room.localParticipant,
-      isHost: p.identity.startsWith('host-'),
+      isHost: p.identity.startsWith('host-') || p.attributes?.['meetspace.coHost'] === 'true',
+      isCoHost: p.attributes?.['meetspace.coHost'] === 'true',
       handRaised: p.attributes?.['meetspace.handRaised'] === 'true',
       isSpeaking: Boolean(p.isSpeaking && p.isMicrophoneEnabled),
       connectionQuality: p.connectionQuality || 'unknown',

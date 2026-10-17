@@ -20,6 +20,11 @@ const { isDark } = storeToRefs(appearance);
 const roomName = ref("");
 const roomPassword = ref("");
 const showRoomPassword = ref(false);
+const scheduleEnabled = ref(false);
+const scheduleStart = ref('');
+const scheduleDuration = ref(60);
+const scheduleRepeat = ref('none');
+const scheduleTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Makassar';
 const modeOptions = Object.entries(roomModes);
 const themeOptions = computed(() =>
     preferences.availableThemes.map(id => [id, themes[id]]),
@@ -42,7 +47,9 @@ const activeFeatures = computed(() =>
         })),
 );
 
-const canCreateRoom = computed(() => roomName.value.trim().length > 0 && (!roomPassword.value || roomPassword.value.trim().length >= 6));
+const canCreateRoom = computed(() => roomName.value.trim().length > 0 && (!roomPassword.value || roomPassword.value.trim().length >= 6) &&
+    (!scheduleEnabled.value || (selectedMode.value === 'professional' && Number.isFinite(Date.parse(scheduleStart.value)) &&
+      Date.parse(scheduleStart.value) > Date.now() - 5 * 60_000 && scheduleDuration.value >= 15 && scheduleDuration.value <= 480)));
 
 function chooseMode(mode) {
     preferences.setSelectedMode(mode);
@@ -66,6 +73,10 @@ async function createRoom() {
             mode: selectedMode.value,
             theme: selectedTheme.value,
             ...(roomPassword.value ? { password: roomPassword.value } : {}),
+            ...(scheduleEnabled.value && selectedMode.value === 'professional' ? { schedule: {
+                startsAt: Date.parse(scheduleStart.value), durationMinutes: Number(scheduleDuration.value),
+                repeat: scheduleRepeat.value, timezone: scheduleTimezone,
+            } } : {}),
         };
 
         const response = await api.post("/rooms", roomData);
@@ -200,6 +211,16 @@ useErrorToast(error)
                             <button type="button" class="ms-button ms-button-outline" :aria-pressed="showRoomPassword" @click="showRoomPassword = !showRoomPassword">{{ showRoomPassword ? 'Sembunyikan' : 'Tampilkan' }}</button>
                         </div>
                         <small id="password-help">Kosongkan jika tidak perlu. Bagikan password terpisah dari undangan. Persetujuan host tetap diperlukan.</small>
+                    </div>
+
+                    <div v-if="selectedMode === 'professional'" class="schedule-box">
+                        <label class="schedule-toggle"><input v-model="scheduleEnabled" type="checkbox" /> Jadwalkan Professional Meeting</label>
+                        <div v-if="scheduleEnabled" class="schedule-fields">
+                            <label>Mulai<input v-model="scheduleStart" class="ms-input" type="datetime-local" required /></label>
+                            <label>Durasi (menit)<input v-model.number="scheduleDuration" class="ms-input" type="number" min="15" max="480" step="15" /></label>
+                            <label>Pengulangan<select v-model="scheduleRepeat" class="ms-input"><option value="none">Sekali</option><option value="weekly">Setiap minggu · link sama</option></select></label>
+                            <small>Zona waktu: {{ scheduleTimezone }}. Undangan kalender tersedia setelah room dibuat.</small>
+                        </div>
                     </div>
 
                     <div class="section-divider"></div>
@@ -360,6 +381,10 @@ useErrorToast(error)
         </main>
     </div>
 </template>
+
+<style scoped>
+.schedule-box{border:2px solid var(--retro-line,var(--border-color));border-radius:13px;background:var(--bg-elevated);padding:15px;margin:16px 0}.schedule-toggle{display:flex;gap:9px;align-items:center;font-size:13px;font-weight:900}.schedule-toggle input{width:17px;height:17px;accent-color:var(--color-primary)}.schedule-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}.schedule-fields label{display:grid;gap:6px;font-size:11px;font-weight:900}.schedule-fields label:nth-child(3),.schedule-fields small{grid-column:1/-1}.schedule-fields select{color:var(--text-primary);background:var(--bg-app)}.schedule-fields small{font-size:10px;color:var(--text-secondary)}@media(max-width:600px){.schedule-fields{grid-template-columns:1fr}.schedule-fields label:nth-child(3),.schedule-fields small{grid-column:auto}}
+</style>
 
 <style scoped>
 /* MEETSPACE — RETRO POP 70s / fully tokenized for light + dark */

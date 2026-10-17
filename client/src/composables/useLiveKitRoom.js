@@ -41,7 +41,7 @@ export function useLiveKitRoom() {
     try {
       const result = await requestToken(roomId,participantName)
       if (cancelled) return null
-      const { serverUrl, room, isHost, clock } = result
+      const { serverUrl, room, isHost, isOwner, clock } = result
       const livekitRoom = await connectToMeeting(serverUrl, result.token)
       if (cancelled) { await disconnectFromMeeting(livekitRoom); return null }
       current = livekitRoom
@@ -49,7 +49,7 @@ export function useLiveKitRoom() {
       token.value=result.token
       activeRoomId=roomId;activeName=participantName
       livekitRoom.on(RoomEvent.Disconnected, disconnected)
-      return { livekitRoom, room, isHost, token:result.token, clock }
+      return { livekitRoom, room, isHost, isOwner, token:result.token, clock }
     } catch (e) {
       error.value = e.response?.data?.message || e.message || 'Unable to join'
       throw e

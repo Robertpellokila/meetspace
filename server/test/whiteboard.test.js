@@ -29,6 +29,16 @@ test('whiteboard requires a room-scoped token and an active approved membership'
   records.get('rooms/study-room').status='closed'
   assert.equal((await request(hostToken)).status,404)
 })
+test('Professional room reuses the collaborative whiteboard and its host turn control',async()=>{
+  records.set('rooms/professional-room',{id:'professional-room',mode:'professional',hostUid:'owner',status:'active'})
+  records.set('rooms/professional-room/joinRequests/visitor',{status:'approved',expiresAt:Date.now()+60000})
+  const host=await token('host-owner','professional-room')
+  const guest=await token('guest-visitor','professional-room')
+  assert.equal((await request(host,{room:'professional-room'})).status,200)
+  assert.equal((await request(guest,{room:'professional-room',operation:{type:'add',pageId:'page-1',object:pen}})).status,403)
+  assert.equal((await request(host,{room:'professional-room',operation:{type:'add',pageId:'page-1',object:pen}})).status,200)
+  assert.equal((await request(guest,{room:'professional-room'})).body.data.pages[0].objects.length,1)
+})
 test('a saved drawing is readable by another participant and retries do not duplicate it',async()=>{
   const op={type:'add',pageId:'page-1',object:pen}
   const saved=await request(hostToken,{operation:op})

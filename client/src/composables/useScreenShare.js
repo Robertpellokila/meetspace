@@ -8,7 +8,8 @@ export function useScreenShare(participants, getRoom, syncParticipants) {
     if (!room || busy.value) return
     busy.value = true
     try {
-      await room.localParticipant.setScreenShareEnabled(!room.localParticipant.isScreenShareEnabled)
+      const enabled = !room.localParticipant.isScreenShareEnabled
+      await room.localParticipant.setScreenShareEnabled(enabled, enabled ? { audio: true, systemAudio: 'include' } : undefined)
       syncParticipants()
     } finally { busy.value = false }
   }

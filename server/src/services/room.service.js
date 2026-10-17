@@ -17,7 +17,7 @@ export function isMeetingId(value) {
 // meetingCodes documents for ALL rooms BEFORE calling createRoom(). This is
 // important for breakout transactions: Firestore prohibits reads after writes.
 export async function createRoom(
-  { name, mode, theme, hostUid, parentRoomId, passwordHash, meetingId },
+  { name, mode, theme, hostUid, parentRoomId, passwordHash, meetingId, schedule, coHostUids },
   transaction = null,
 ) {
   const id = randomUUID()
@@ -27,6 +27,8 @@ export async function createRoom(
     createdAt: new Date().toISOString(),
     ...(parentRoomId ? { parentRoomId } : {}),
     ...(passwordHash ? { passwordHash } : {}),
+    ...(schedule ? { schedule } : {}),
+    ...(mode === 'professional' ? { security: { locked: false, muteOnEntry: false, allowScreenShare: true, allowChat: true }, coHostUids: coHostUids || [] } : {}),
   }
   const ref = roomRef(id)
 
@@ -95,7 +97,7 @@ export async function startRoom(roomId) {
   const ref = roomRef(roomId)
   return db.runTransaction(async tx => {
     const snap = await tx.get(ref)
-    if (!snap.exists || snap.data().status !== 'active') return null
+    if (!snap.exists || snap.data().status !== 'active' || snap.data().sessionClosing) return null
     const room = snap.data()
     if (!room.startedAt) {
       room.startedAt = new Date().toISOString()

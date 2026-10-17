@@ -30,8 +30,8 @@ async function checkMembership(read, roomName, identity) {
   const room = await read(db.collection("rooms").doc(roomName));
   if (!room.exists || room.data().status !== "active")
     throw boardError(404, "Room sudah ditutup atau tidak ditemukan.");
-  if (room.data().mode !== "study")
-    throw boardError(403, "Whiteboard tersedia di Study Room.");
+  if (!["study", "professional"].includes(room.data().mode))
+    throw boardError(403, "Whiteboard tersedia di Study dan Professional Room.");
   if (identity === `host-${room.data().hostUid}`) return room.data();
   const requestId = identity?.startsWith("guest-") ? identity.slice(6) : "";
   if (!safeId(requestId))

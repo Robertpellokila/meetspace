@@ -4,18 +4,18 @@ Vue + Pinia di `client/`, Express + Firebase Admin + LiveKit di `server/`.
 Perubahan tahap Professional mempertahankan views, layout, komponen meeting,
 assets, warna, dan appearance store yang sudah ada.
 
-Panduan deployment production ke Vercel atau Cloudflare Pages tersedia di
-[DEPLOYMENT.md](./DEPLOYMENT.md), termasuk environment, Firebase, LiveKit,
-domain, pengujian, dan pemecahan masalah.
+Panduan khusus **Cloudflare Pages + Workers** tersedia di
+[CLOUDFLARE_DEPLOY.md](./CLOUDFLARE_DEPLOY.md). Pilihan Vercel dan
+Pages + backend Vercel tetap dijelaskan di [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Status tahap pengembangan
 
 1. Login/register Firebase, proteksi Create Room, dan host approval sudah disambungkan.
-2. Professional memakai kembali screen sharing yang ada; raise/lower hand,
-   mute tamu, mute semua tamu, turunkan tangan oleh host, dan Remove sudah diimplementasikan.
-3. Study memiliki whiteboard kolaboratif: goresan, bentuk, teks, sticky note,
-   dan halaman bersama. Reactions meeting juga tersedia. Sinkronisasi video,
-   study timer, games, dan editor Mood Manager masih dikembangkan bertahap.
+2. Professional menyediakan share screen dengan opsi audio browser, anotasi saat
+   presentasi, whiteboard kolaboratif, raise hand, co-host, Security, breakout,
+   polling, dan jadwal berulang dengan undangan kalender.
+3. Mode lain memakai layout dan tools masing-masing. Study memiliki whiteboard
+   kolaboratif: goresan, bentuk, teks, sticky note, dan halaman bersama.
 
 ## Menjalankan lokal
 
@@ -65,15 +65,32 @@ room persisten Firestore. Controller lama tidak dipasang ke API.
   peserta dengan tangan terangkat lebih dahulu.
 - Screen share memakai `useScreenShare`, `ProfessionalLayout`, dan
   `ScreenShareStage` yang ada. Native Stop sharing memperbarui toolbar dan gallery.
-  Tombol Share dinonaktifkan ketika peserta lain sedang berbagi; ini aturan UI,
-  bukan pembatasan publikasi yang dipaksakan di server.
-- Host controls memeriksa Firebase UID pemilik room di backend. Client tidak
+  Audio tab/sistem diminta dari browser, tetapi hanya tersedia jika sumber dan
+  browser mendukungnya. Pemilik share dapat menggambar anotasi di atas presentasi;
+  goresan terbaru disiarkan lewat LiveKit.
+- Security dapat mengunci permintaan bergabung baru dan membatasi izin publikasi
+  screen share peserta melalui LiveKit, termasuk yang sudah terhubung. Mute on
+  entry diterapkan saat client masuk. Chat dikirim melalui API; toggle chat
+  menolak pengiriman peserta di server. Pesan LiveKit langsung dari peserta
+  diabaikan aplikasi, sementara kanal data whiteboard, reactions, dan soundboard
+  tetap aktif. Riwayat chat tersimpan di Firestore selama 24 jam; aktifkan TTL
+  collection group `chatMessages`, field `expiresAt`, untuk membersihkan dokumen lama.
+- Host controls memeriksa Firebase UID pemilik atau co-host yang diberi izin di backend. Client tidak
   mendapat grant `roomAdmin`. Mute hanya menonaktifkan track mikrofon yang sedang
   aktif; peserta boleh menyalakannya kembali sendiri. Kamera dan audio screen
   share tidak ikut dimatikan.
 - Remove mencabut approval, lalu memanggil LiveKit untuk memutus peserta.
   Jika LiveKit gagal, API menyatakan kegagalan dan host dapat mencoba Remove lagi;
   approval tetap dicabut. Permintaan baru tetap memerlukan approval baru.
+- Co-host harus peserta berakun yang sudah disetujui masuk ke room; akses penuh
+  admin tidak diperlukan. Pemilik room dapat memberi/mencabut peran dari panel
+  Security. Izin moderasi berakhir saat persetujuan peserta berakhir atau dicabut.
+  Hanya pemilik room yang dapat mengakhiri room atau sesi mingguan.
+- Room Professional dapat dijadwalkan sekali atau setiap minggu. File kalender
+  `.ics` memuat pengingat 15 menit; link dan Meeting ID tetap sama. Akhiri sesi
+  mingguan untuk memutus peserta dan mereset timer tanpa menutup room. Reminder
+  toast halaman akun hanya muncul selama halaman tersebut terbuka; impor `.ics`
+  ke kalender untuk pengingat di luar situs.
 
 ## Verifikasi
 
@@ -158,7 +175,8 @@ room dan waktu; isi chat, audio, video, dan file rekaman tidak diunggah ke dashb
   Multi-speaker (hingga empat), Retro lounge; pin lokal, hide self/no-video,
   timer sesi, background ruang dari katalog mood, pemilihan mic/kamera/speaker,
   salin undangan, fullscreen. Layout/filter khusus Professional; background
-  mengubah ruang aplikasi, bukan background virtual pada kamera.
+  ruang mengubah tampilan aplikasi, sementara blur/gambar kamera diproses lokal
+  sebelum track kamera dipublikasikan.
 - Audio peserta tetap terpasang saat video disembunyikan, dipin, atau panel dibuka.
 - **React**: enam reaksi dikirim lewat LiveKit; tampilan reaksi dibatasi agar tidak
   memenuhi layar. Ini belum menggantikan rate limiting server untuk versi publik.
@@ -169,11 +187,20 @@ room dan waktu; isi chat, audio, video, dan file rekaman tidak diunggah ke dashb
   capture; bukan cloud recording atau rekaman tiap track. Peserta melihat indikator.
   Stop, native stop sharing, Leave, dan pindah breakout menyelesaikan unduhan
   WebM/MP4. Batas 512 MB per rekaman; jangan reload/tutup tab sebelum menyimpannya.
-- **Breakout** (Professional): host membuat hingga enam ruang; peserta yang sudah
-  disetujui memilih ruang sendiri. Room memakai koneksi media/chat terpisah,
-  mempertahankan preferensi mic/kamera, serta menyediakan tombol kembali ke utama.
-  Approval asal diperiksa lagi ketika menerbitkan token breakout. Belum ada
-  penugasan otomatis atau broadcast host lintas ruang.
+- **Breakout** (Professional): host dan co-host membuat hingga enam ruang,
+  menugaskan peserta termasuk sesama fasilitator, mengatur timer, mengirim
+  pengumuman, dan menerima permintaan bantuan dalam modal kelompok yang lebih luas.
+  Host dan co-host melihat daftar peserta yang sedang terhubung di tiap ruang.
+  Target menerima modal **Masuk kelompok** atau **Batal**; tujuannya tetap bisa
+  dibuka nanti dari menu Breakout. Saat timer
+  habis, peserta breakout dikembalikan ke room utama atau lobby bila masuk langsung
+  ke breakout. Room memakai koneksi media/chat terpisah dan approval asal tetap
+  diperiksa saat menerbitkan token breakout.
+- **Polling** (Professional): fasilitator membuat draf pertanyaan dengan 2–6
+  pilihan, membuka/menutup voting, dan melihat hitungan jawaban. Tiap identitas
+  approval hanya dapat memilih sekali. Polling sesi mingguan sebelumnya disembunyikan.
+- **Pemeriksaan perangkat** di lobby menyediakan preview kamera, level mikrofon,
+  dan tes speaker. Pintasan Alt+M/V/S/H mengontrol mic, kamera, share, dan tangan.
 - **End all**: dialog konfirmasi, menutup admission room dan breakout, lalu memutus
   koneksi LiveKit. Kegagalan pemutusan bisa dicoba lagi; room tetap ditutup.
 

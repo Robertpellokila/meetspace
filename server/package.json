@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "test": "node --experimental-test-module-mocks --test"
+    "test": "node --experimental-test-module-mocks --test",
+    "worker:dev": "wrangler dev",
+    "worker:check": "wrangler deploy --dry-run",
+    "worker:deploy": "wrangler deploy"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +23,7 @@
     "livekit-server-sdk": "^2.19.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "wrangler": "^4.151.1"
   }
 }

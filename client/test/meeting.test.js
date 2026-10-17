@@ -54,14 +54,18 @@ test('host mute updates mic state even when the audio track is not subscribed',(
 })
 test('screen share starts, native browser stop clears it, and failed permission can retry',async()=>{
   const room=roomFixture(),state=useParticipants()
+  let captureOptions
   state.attach(room)
   const screen=useScreenShare(state.participants,()=>room,state.sync)
-  room.localParticipant.setScreenShareEnabled=async enabled=>{
+  room.localParticipant.setScreenShareEnabled=async (enabled,options)=>{
+    if(enabled)captureOptions=options
     room.localParticipant.isScreenShareEnabled=enabled
     room.localParticipant.publications=enabled?[{source:Track.Source.ScreenShare,isMuted:false,track:{kind:'video'}}]:[]
     room.emit(enabled?RoomEvent.LocalTrackPublished:RoomEvent.LocalTrackUnpublished)
   }
   await screen.toggle()
+  assert.equal(captureOptions.audio,true)
+  assert.equal(captureOptions.systemAudio,'include')
   assert.equal(screen.isSharing.value,true)
   assert.equal(screen.sharer.value.id,'host-owner')
   await room.localParticipant.setScreenShareEnabled(false)

@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "meetspace-api",
+  "main": "src/worker.js",
+  "keep_vars": true,
+  "compatibility_date": "2026-10-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "alias": {
+    "firebase-admin/firestore": "./src/platform/firestore-worker.js"
+  },
+  "vars": {
+    "FIRESTORE_PREFER_REST": "true"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

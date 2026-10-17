@@ -42,6 +42,9 @@ const micEnabled = ref(false);
 const cameraLoading = ref(false);
 const micLoading = ref(false);
 const mediaError = ref("");
+const micLevel = ref(0);
+let audioContext = null;
+let meterTimer = null;
 
 const videoEl = ref(null);
 let cameraStream = null;
@@ -76,7 +79,8 @@ async function fetchRoom(id) {
     ]);
     if (disposed) return;
     room.value = response.data.data;
-    isHost.value = role.data.data.isHost;
+    // Co-hosts still enter through their approved guest identity.
+    isHost.value = role.data.data.isOwner === true;
     let saved = {};
     try {
       saved =
@@ -151,6 +155,7 @@ async function enableMicrophone() {
     micStream?.getTracks().forEach((track) => track.stop());
     micStream = null;
     micEnabled.value = false;
+    stopMeter();
     return;
   }
   micLoading.value = true;
@@ -166,6 +171,7 @@ async function enableMicrophone() {
       return;
     }
     micEnabled.value = true;
+    startMeter();
   } catch (err) {
     mediaError.value = err;
   } finally {
@@ -173,7 +179,40 @@ async function enableMicrophone() {
   }
 }
 
+function stopMeter() {
+  clearInterval(meterTimer); meterTimer = null; micLevel.value = 0;
+  if (audioContext) { void audioContext.close(); audioContext = null; }
+}
+function startMeter() {
+  stopMeter();
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass || !micStream) return;
+  audioContext = new AudioContextClass();
+  const source = audioContext.createMediaStreamSource(micStream);
+  const analyser = audioContext.createAnalyser(); analyser.fftSize = 512; source.connect(analyser);
+  const samples = new Uint8Array(analyser.frequencyBinCount);
+  meterTimer = setInterval(() => {
+    analyser.getByteTimeDomainData(samples);
+    const rms = Math.sqrt(samples.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / samples.length);
+    micLevel.value = Math.min(100, Math.round(rms * 330));
+  }, 100);
+}
+async function testSpeaker() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return toast.error('Browser belum mendukung tes speaker.');
+  try {
+    const context = new AudioContextClass();
+    await context.resume();
+    const oscillator = context.createOscillator(), gain = context.createGain();
+    oscillator.frequency.value = 523.25; gain.gain.setValueAtTime(0.08, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.35);
+    oscillator.connect(gain).connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime + 0.35);
+    oscillator.onended = () => { void context.close() };
+  } catch (error) { toast.error(error) }
+}
+
 function stopPreview() {
+  stopMeter();
   // Stop camera
   if (cameraStream) {
     cameraStream.getTracks().forEach((track) => track.stop());
@@ -367,6 +406,7 @@ useErrorToast(error, mediaError);
               }}
             </button>
           </div>
+          <div class="device-preflight"><button type="button" class="retro-button device-button" @click="testSpeaker">♫ Test speaker</button><div class="mic-meter"><span>Level mikrofon</span><div role="meter" :aria-valuenow="micLevel" aria-valuemin="0" aria-valuemax="100" aria-label="Level mikrofon"><i :style="{width:micLevel+'%'}" /></div><small>{{micEnabled?'Bicara untuk memeriksa mikrofon.':'Aktifkan mikrofon untuk melihat level.'}}</small></div></div>
 
           <div class="rule"></div>
           <label class="field-label" for="guest-name"
@@ -497,6 +537,8 @@ useErrorToast(error, mediaError);
     </main>
   </div>
 </template>
+
+<style scoped>.device-preflight{display:flex;gap:12px;align-items:center;margin-top:12px}.mic-meter{display:grid;gap:4px;flex:1;min-width:120px;font-size:11px;font-weight:800}.mic-meter>div{height:12px;border:2px solid var(--retro-line);border-radius:9px;background:var(--retro-card);overflow:hidden}.mic-meter i{display:block;height:100%;background:var(--retro-gold);transition:width .1s}.mic-meter small{font-weight:500;color:var(--text-secondary)}@media(max-width:600px){.device-preflight{align-items:stretch;flex-direction:column}}</style>
 
 <style scoped>
 .lobby-page {

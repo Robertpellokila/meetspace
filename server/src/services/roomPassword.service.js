@@ -56,6 +56,8 @@ export function publicRoom(room) {
       "startedAt",
       "parentRoomId",
       "breakoutIds",
+      "schedule",
+      "security",
     ]
       .filter((key) => room[key] !== undefined)
       .map((key) => [key, room[key]]),
