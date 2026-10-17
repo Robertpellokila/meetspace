@@ -29,6 +29,8 @@ mock.module('livekit-server-sdk', { namedExports:{AccessToken,TrackSource,DataPa
 process.env.LIVEKIT_URL='wss://test.invalid'
 process.env.LIVEKIT_API_KEY='test-key'
 process.env.LIVEKIT_API_SECRET='test-secret-at-least-thirty-two-characters'
+process.env.RATE_LIMIT_SECRET='test-rate-limit-secret-at-least-thirty-two-characters'
+process.env.ADMIN_UIDS='admin'
 const {default:router}=await import('../src/routes/room.js')
 const app=express().use(express.json()).use('/api/rooms',router)
 let server, base
@@ -63,6 +65,39 @@ test('Create Room requires Firebase auth and validates the existing mode/mood ca
   assert.equal(created.status,201)
   assert.equal(records.get(`rooms/${created.body.data.id}`).hostUid,'owner')
   assert.equal(created.body.data.hostUid,undefined)
+})
+test('numeric ID lookup and waiting-room requests are rate limited per client',async()=>{
+  for(let index=0;index<30;index++)assert.equal((await request('/by-code/0000000000')).status,404)
+  const lookup=await request('/by-code/0000000000')
+  assert.equal(lookup.status,429)
+  assert.equal(lookup.body.code,'RATE_LIMITED')
+  for(let index=0;index<8;index++)assert.equal((await request(`/${roomId}/join-requests`,{method:'POST',body:{participantName:'Guest'}})).status,201)
+  const admission=await request(`/${roomId}/join-requests`,{method:'POST',body:{participantName:'Guest'}})
+  assert.equal(admission.status,429)
+  assert.equal(admission.body.code,'RATE_LIMITED')
+})
+test('unverified accounts must open the Firebase email link before joining or hosting',async()=>{
+  records.set('accounts/unverified',{uid:'unverified',access:'full'})
+  const body={name:'Private room',mode:'professional',theme:'focus'}
+  const create=await request('',{method:'POST',user:'unverified',body})
+  assert.equal(create.status,403)
+  assert.equal(create.body.code,'EMAIL_NOT_VERIFIED')
+  const admission=await request(`/${roomId}/join-requests`,{method:'POST',user:'unverified',body:{participantName:'Guest'}})
+  assert.equal(admission.status,403)
+  assert.equal(admission.body.code,'EMAIL_NOT_VERIFIED')
+  records.get(roomPath).hostUid='unverified'
+  assert.equal((await request(`/${roomId}/token`,{method:'POST',user:'unverified'})).status,403)
+  assert.equal((await request(`/${roomId}/join-requests`,{user:'unverified'})).status,403)
+})
+test('a verified admin can create and host with a password-only login',async()=>{
+  records.set('accounts/admin',{uid:'admin',access:'full'})
+  const create=await request('',{method:'POST',user:'admin-no-mfa',body:{name:'Admin room',mode:'professional',theme:'focus'}})
+  assert.equal(create.status,201)
+  records.get(roomPath).hostUid='admin'
+  assert.equal((await request(`/${roomId}/my-role`,{user:'admin-no-mfa'})).body.data.isHost,true)
+  assert.equal((await request(`/${roomId}/my-role`,{user:'admin'})).body.data.isHost,true)
+  assert.equal((await request(`/${roomId}/token`,{method:'POST',user:'admin-no-mfa'})).status,200)
+  assert.equal((await request(`/${roomId}/token`,{method:'POST',user:'admin'})).status,200)
 })
 test('guest admission requires the secret and host approval, then issues a scoped token',async()=>{
   const created=await request(`/${roomId}/join-requests`,{method:'POST',body:{participantName:'Visitor'}})

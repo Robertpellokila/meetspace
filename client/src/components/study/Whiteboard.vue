@@ -251,6 +251,7 @@ function wheel(e) {
 }
 function keydown(e) {
     if (
+        e.altKey ||
         !canvas.value?.getClientRects?.().length ||
         ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(document.activeElement?.tagName) ||
         document.activeElement?.isContentEditable ||

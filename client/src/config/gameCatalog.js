@@ -270,6 +270,33 @@ export const GAME_CATALOG = [
       restart: true,
     },
   },
+  {
+    id: 'date-bingo', title: 'Bingo Kencan', subtitle: 'Selesaikan momen kecil bersama',
+    description: 'Tandai aktivitas yang sudah dilakukan dan lengkapi satu garis Bingo berdua.',
+    type: GAME_TYPES.NATIVE, component: 'CoupleMiniGames', category: 'coop',
+    tags: ['couple', 'bingo', 'date'], icon: '🎟️',
+    coverGradient: 'linear-gradient(135deg, #f9deb3, #e4b8c5)',
+    minPlayers: 2, maxPlayers: 8, duration: '10–20 min', status: GAME_STATUS.AVAILABLE,
+    features: { multiplayer: true, turnBased: false, scoring: false, restart: true },
+  },
+  {
+    id: 'emoji-decode', title: 'Tebak Emoji', subtitle: 'Baca petunjuk, rebut poin',
+    description: 'Tebak momen pasangan dari rangkaian emoji; satu tebakan per orang tiap ronde.',
+    type: GAME_TYPES.NATIVE, component: 'CoupleMiniGames', category: 'competitive',
+    tags: ['couple', 'emoji', 'quiz'], icon: '🧩',
+    coverGradient: 'linear-gradient(135deg, #dae8bd, #f7df9e)',
+    minPlayers: 2, maxPlayers: 2, duration: '5–10 min', status: GAME_STATUS.AVAILABLE,
+    features: { multiplayer: true, turnBased: true, scoring: true, restart: true },
+  },
+  {
+    id: 'story-chain', title: 'Cerita Sambung', subtitle: 'Satu kalimat, lalu giliranmu',
+    description: 'Bangun cerita kencan imajinatif bergantian dalam delapan kalimat.',
+    type: GAME_TYPES.NATIVE, component: 'CoupleMiniGames', category: 'romantic',
+    tags: ['couple', 'story', 'creative'], icon: '📖',
+    coverGradient: 'linear-gradient(135deg, #ead7f0, #f4d2b9)',
+    minPlayers: 2, maxPlayers: 8, duration: '5–10 min', status: GAME_STATUS.AVAILABLE,
+    features: { multiplayer: true, turnBased: true, scoring: false, restart: true },
+  },
 ];
 
 /**

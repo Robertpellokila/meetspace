@@ -145,11 +145,15 @@ Untuk memisahkan data percobaan, gunakan project Firebase production tersendiri.
 1. Buka Firebase Console dan pilih project.
 2. Di pengaturan project, daftarkan aplikasi Web jika belum ada.
 3. Catat `apiKey`, `authDomain`, `projectId`, dan `appId` dari konfigurasi Web.
-4. Aktifkan **Authentication → Sign-in method → Email/Password**.
+4. Aktifkan **Authentication → Sign-in method → Email/Password** dan **Google** jika tombol login Google dipakai.
 5. Buat database **Cloud Firestore `(default)`**, karena kode menggunakan `getFirestore()` tanpa nama database khusus.
 6. Pastikan konfigurasi Web dan kredensial Admin berasal dari project yang sama.
 
 Saat domain frontend tersedia, tambahkan hostname-nya di **Authentication → Settings → Authorized domains**, misalnya `meetspace-web.vercel.app` atau `meet.example.com`, tanpa `https://` dan tanpa path. Ini adalah pengaturan domain autentikasi, bukan pengganti `CLIENT_ORIGIN` backend. [Pengaturan domain Firebase Auth](https://firebase.google.com/docs/auth/faq-and-troubleshooting)
+
+Pendaftaran email/password MeetSpace memakai link verifikasi yang dikirim langsung oleh Firebase Authentication dan dibuka di halaman bawaan Firebase. Pengguna membuka link itu, lalu kembali ke halaman Akun dan menekan **Saya sudah verifikasi**; login berikutnya cukup email dan password. Periksa template **Email address verification** di Firebase Authentication → Templates. Domain Vercel, Cloudflare Pages, domain custom, dan `localhost` perlu masuk **Authorized domains** untuk Google Sign-In dan URL kembali dari link reset. Backend tidak memerlukan layanan pengirim OTP atau secret email. Setelah verifikasi, pengguna baru dapat bergabung sebagai peserta; pembuatan room, akses host/fasilitator, dan dashboard admin masih mengikuti hak dari admin. Tamu tanpa akun tetap melalui waiting room. [Verifikasi email Firebase](https://firebase.google.com/docs/auth/web/manage-users), [Google Sign-In](https://firebase.google.com/docs/auth/web/google-signin).
+
+Periksa template **Password reset**. Link dari tombol **Lupa password?** kembali ke `/login` pada domain frontend yang diizinkan. Jika akun admin lama sudah pernah mengaktifkan TOTP di Firebase, Firebase tetap meminta kode saat login meski UI baru tidak lagi memakai MFA. Dengan kredensial Admin project yang benar, jalankan `cd server && npm run auth:remove-old-mfa` untuk pratinjau dan `npm run auth:remove-old-mfa -- --apply` untuk menghapus seluruh faktor kedua pada UID `ADMIN_UIDS`. Akun admin tanpa faktor terpasang tidak perlu migrasi.
 
 ### 3.2 Siapkan kredensial Admin untuk backend
 
@@ -233,6 +237,7 @@ Nilai `VITE_*` dimasukkan ke bundle saat build dan dapat dibaca pengguna. Setela
 | `CLIENT_ORIGIN` | `https://meetspace-web.vercel.app` atau `https://meetspace-web.pages.dev` | Satu origin frontend yang aktif |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | JSON service account lengkap | Secret backend |
 | `ADMIN_UIDS` | UID admin production | Dapat berupa daftar dipisahkan koma |
+| `RATE_LIMIT_SECRET` | String acak minimal 32 karakter | Secret backend untuk counter rate limit Firestore; wajib sebelum endpoint daftar/join dipakai |
 | `LIVEKIT_URL` | `wss://PROJECT.livekit.cloud` | URL project media |
 | `LIVEKIT_API_KEY` | API key project LiveKit | Simpan di backend |
 | `LIVEKIT_API_SECRET` | API secret project LiveKit | Secret backend |
@@ -533,7 +538,10 @@ Rollback kode tidak mengembalikan perubahan data Firestore, akun Firebase, pembe
 | API 503 terkait autentikasi | Periksa kredensial Admin, IAM, project ID, koneksi ke Firebase, dan log backend |
 | Startup gagal parse JSON/private key | Secret Admin bukan JSON valid atau escape private key berubah; tempel ulang JSON asli melalui dashboard backend |
 | Login sukses tetapi Firestore gagal | Login Web dan akses Admin adalah dua konfigurasi berbeda; periksa database `(default)`, izin service account, serta status Firestore |
-| Admin mendapat 403 | UID login tidak ada dalam `ADMIN_UIDS` deployment aktif, atau berasal dari Firebase project lain |
+| Admin mendapat 403 | Periksa UID di `ADMIN_UIDS` dan apakah link verifikasi Firebase sudah dibuka |
+| Link verifikasi tidak terkirim | Periksa template **Email address verification**, provider Email/Password, batas pengiriman Firebase, dan folder spam |
+| Pencarian ID/pendaftaran/waiting room mendapat 503 | `RATE_LIMIT_SECRET` belum diisi atau Firestore untuk counter tidak tersedia |
+| Permintaan mendapat 429 | Batas per IP tercapai; ikuti `Retry-After` dan periksa pola trafik bila berulang |
 | Akun baru tidak dapat membuat room | Perilaku yang diharapkan sampai admin memberikan akses penuh |
 | Whiteboard 401/403 | Periksa token room/approval, room masih aktif, dan key LiveKit yang digunakan backend; jangan mengganti dengan Firebase token manual |
 | Whiteboard 503 | Periksa akses Firestore dan konfigurasi backend; cek log error tanpa membagikan token |

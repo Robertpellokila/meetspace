@@ -12,8 +12,8 @@ const players = ['host-a', 'guest-b']
 const play = (gameId, state, action, actor = players[0]) => reduceGameAction({ gameId, state, action, actor, participants: players })
 
 test('catalog imports, finds each native game, and filters by category', () => {
-  assert.equal(ALL_GAMES.length, 8)
-  for (const id of ['couple-quiz', 'truth-or-dare', 'tic-tac-toe', 'would-you-rather', 'memory-match']) assert.equal(getGameById(id)?.status, 'available')
+  assert.equal(ALL_GAMES.length, 11)
+  for (const id of ['couple-quiz', 'truth-or-dare', 'tic-tac-toe', 'would-you-rather', 'memory-match', 'date-bingo', 'emoji-decode', 'story-chain']) assert.equal(getGameById(id)?.status, 'available')
   for (const id of ['playpager-word-puzzle', 'playpager-reversi', 'playpager-checkers']) {
     const game = getGameById(id)
     assert.equal(game?.status, 'available')
@@ -53,7 +53,7 @@ test('admin question overrides add, hide and restore content in the live getters
   assert.equal(getCoupleQuestion('romantic', 0).id, original.id)
 })
 
-test('all five native reducers can advance a legal round', () => {
+test('the existing native reducers can advance a legal round', () => {
   let state = play('tic-tac-toe', {}, { type: 'make-move', position: 0 })
   assert.equal(state.board[0], 'X')
   assert.throws(() => play('tic-tac-toe', state, { type: 'make-move', position: 1 }), /giliranmu/)
@@ -84,4 +84,27 @@ test('all five native reducers can advance a legal round', () => {
   assert.ok(state.deck.length > 0)
   state = play('memory-match', state, { type: 'mm-flip', index: 0 })
   assert.equal(state.revealed.length, 1)
+})
+
+test('couple mini-games share valid turns and reject moves from the wrong player', () => {
+  let state = play('date-bingo', {}, { type: 'bingo-toggle', index: 0 })
+  assert.equal(state.marked[0], players[0])
+  assert.throws(() => play('date-bingo', state, { type: 'bingo-toggle', index: 0 }, players[1]), /pasanganmu/)
+  state = play('date-bingo', state, { type: 'bingo-new' })
+  assert.deepEqual(state.marked, {})
+
+  state = play('emoji-decode', {}, { type: 'emoji-guess', choice: 1 })
+  assert.equal(state.phase, 'guessing')
+  assert.throws(() => play('emoji-decode', state, { type: 'emoji-guess', choice: 0 }), /tidak tersedia/)
+  state = play('emoji-decode', state, { type: 'emoji-guess', choice: 0 }, players[1])
+  assert.equal(state.phase, 'results')
+  assert.equal(state.scores[players[1]], 1)
+  state = play('emoji-decode', state, { type: 'emoji-next' })
+  assert.equal(state.index, 1)
+
+  state = play('story-chain', {}, { type: 'story-add', text: 'Kami menemukan sebuah peta.' })
+  assert.throws(() => play('story-chain', state, { type: 'story-add', text: 'Lanjut.' }), /giliranmu/)
+  state = play('story-chain', state, { type: 'story-add', text: 'Lalu kami berangkat bersama.' }, players[1])
+  assert.equal(state.lines.length, 2)
+  assert.throws(() => play('story-chain', state, { type: 'story-add', text: 'x'.repeat(121) }), /120 karakter/)
 })

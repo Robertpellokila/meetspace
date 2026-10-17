@@ -14,6 +14,7 @@ import {
   getWyrQuestion,
 } from "../config/wouldYouRatherQuestions.js";
 import { memoryDifficulty, memoryDeck } from "../config/memoryMatchDeck.js";
+import { DATE_BINGO, EMOJI_RIDDLES, STORY_STARTERS } from "../config/coupleMiniGames.js";
 
 const WIN_LINES = [
   [0, 1, 2],
@@ -273,6 +274,59 @@ function reduceTruthOrDare({ state = {}, action, actor, participants = [] }) {
   throw new Error("Aksi Truth or Dare tidak dikenal");
 }
 
+function reduceDateBingo({ state = {}, action, actor, participants = [] }) {
+  const players = [...new Set(participants)].slice(0, 8);
+  if (players.length < 2 || !players.includes(actor)) throw new Error('Bingo Kencan perlu minimal dua pemain');
+  const round = Number.isSafeInteger(state.round) && state.round >= 0 ? state.round : 0;
+  const marked = state.marked && typeof state.marked === 'object' && !Array.isArray(state.marked) ? { ...state.marked } : {};
+  if (action?.type === 'bingo-new') {
+    if (actor !== players[0]) throw new Error('Hanya host yang dapat mengganti kartu');
+    return { round: round + 1, marked: {} };
+  }
+  if (action?.type !== 'bingo-toggle' || !Number.isInteger(action.index) || action.index < 0 || action.index >= DATE_BINGO.length) throw new Error('Kotak Bingo tidak valid');
+  const current = marked[action.index];
+  if (current && current !== actor) throw new Error('Kotak ini sudah ditandai pasanganmu');
+  if (current) delete marked[action.index];
+  else marked[action.index] = actor;
+  return { round, marked };
+}
+
+function reduceEmojiDecode({ state = {}, action, actor, participants = [] }) {
+  const players = [...new Set(participants)].slice(0, 2);
+  if (players.length !== 2 || !players.includes(actor)) throw new Error('Tebak Emoji perlu dua pemain');
+  const index = Number.isSafeInteger(state.index) && state.index >= 0 ? state.index : 0;
+  const scores = Object.fromEntries(players.map(id => [id, Number.isSafeInteger(state.scores?.[id]) ? state.scores[id] : 0]));
+  const guesses = state.guesses && typeof state.guesses === 'object' ? { ...state.guesses } : {};
+  const phase = state.phase === 'results' ? 'results' : 'guessing';
+  if (action?.type === 'emoji-next') {
+    if (actor !== players[0] || phase !== 'results') throw new Error('Ronde belum selesai');
+    return { index: index + 1, scores, guesses: {}, phase: 'guessing', winner: null };
+  }
+  if (action?.type !== 'emoji-guess' || phase !== 'guessing' || Object.hasOwn(guesses, actor)) throw new Error('Tebakan tidak tersedia');
+  const riddle = EMOJI_RIDDLES[index % EMOJI_RIDDLES.length];
+  if (!Number.isInteger(action.choice) || action.choice < 0 || action.choice >= riddle.options.length) throw new Error('Pilihan tidak valid');
+  guesses[actor] = action.choice;
+  const correct = action.choice === riddle.answer;
+  if (correct) scores[actor] += 1;
+  return { index, scores, guesses, phase: correct || players.every(id => Object.hasOwn(guesses, id)) ? 'results' : 'guessing', winner: correct ? actor : null };
+}
+
+function reduceStoryChain({ state = {}, action, actor, participants = [] }) {
+  const players = [...new Set(participants)].slice(0, 8);
+  if (players.length < 2 || !players.includes(actor)) throw new Error('Cerita Sambung perlu minimal dua pemain');
+  const starter = Number.isSafeInteger(state.starter) && state.starter >= 0 ? state.starter : 0;
+  const lines = Array.isArray(state.lines) ? state.lines.slice(0, 8) : [];
+  if (action?.type === 'story-new') {
+    if (actor !== players[0]) throw new Error('Hanya host yang dapat membuat cerita baru');
+    return { starter: (starter + 1) % STORY_STARTERS.length, lines: [] };
+  }
+  if (lines.length >= 8 || actor !== players[lines.length % players.length]) throw new Error('Belum giliranmu');
+  if (action?.type !== 'story-add' && action?.type !== 'story-skip') throw new Error('Aksi cerita tidak valid');
+  const text = action.type === 'story-skip' ? 'Lewat giliran' : typeof action.text === 'string' ? action.text.trim().replace(/\s+/g, ' ') : '';
+  if (!text || text.length > 120) throw new Error('Kalimat harus 1–120 karakter');
+  return { starter, lines: [...lines, { actor, text }] };
+}
+
 export function reduceGameAction(context) {
   if (context?.gameId === "tic-tac-toe") return reduceTicTacToe(context);
   if (context?.gameId === "couple-quiz") return reduceCoupleQuiz(context);
@@ -280,6 +334,9 @@ export function reduceGameAction(context) {
   if (context?.gameId === "would-you-rather")
     return reduceWouldYouRather(context);
   if (context?.gameId === "memory-match") return reduceMemoryMatch(context);
+  if (context?.gameId === 'date-bingo') return reduceDateBingo(context);
+  if (context?.gameId === 'emoji-decode') return reduceEmojiDecode(context);
+  if (context?.gameId === 'story-chain') return reduceStoryChain(context);
   throw new Error(`Reducer ${context?.gameId || "unknown"} belum tersedia`);
 }
 

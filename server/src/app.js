@@ -9,6 +9,7 @@ import whiteboardRoutes from './routes/whiteboard.routes.js';
 import gameContentRoutes from './routes/gameContent.js';
 import gameCatalogRoutes from './routes/gameCatalog.js';
 import soundEffectsRoutes from './routes/soundEffects.js';
+import authRoutes from './routes/auth.js';
 
 const app = express();
 
@@ -22,6 +23,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/rooms', roomRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/account', accountRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/game-content', gameContentRoutes);

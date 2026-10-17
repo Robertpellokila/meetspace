@@ -24,6 +24,10 @@ test('only admin can manage catalog and native settings cannot replace component
   assert.equal((await request('/game-catalog/couple-quiz', 'PATCH', { status: 'available', component: 'Other' }, 'admin')).status, 200)
   assert.deepEqual(Object.keys(records.get('gameCatalogOverrides/couple-quiz')).sort(), ['createdAt', 'id', 'status', 'updatedAt', 'updatedBy'])
   assert.equal((await request('/game-catalog/couple-quiz', 'DELETE', null, 'admin')).status, 400)
+  for (const id of ['date-bingo', 'emoji-decode', 'story-chain']) {
+    assert.equal((await request(`/game-catalog/${id}`, 'PATCH', { status: 'available', component: 'Other' }, 'admin')).status, 200)
+    assert.equal((await request(`/game-catalog/${id}`, 'DELETE', null, 'admin')).status, 400)
+  }
 })
 
 test('external games require approved HTTPS URL and support create, update, delete', async () => {

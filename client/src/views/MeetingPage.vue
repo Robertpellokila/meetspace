@@ -19,6 +19,7 @@ import { toast } from "../services/toast.js";
 import { useMeetingStore } from "../stores/meeting";
 import { roomModes } from "../config/roomModes";
 import { meetingLayouts } from "../config/meetingLayouts";
+import { isMeetingShortcutTarget, meetingShortcutKey } from "../config/meetingShortcuts.js";
 import MeetingShell from "../components/meeting/MeetingShell.vue";
 
 const route = useRoute();
@@ -41,6 +42,7 @@ const view = ref({
   hideSelf: false,
   hideNoVideo: false,
   showTimer: true,
+  autoHideControls: true,
   background: "default",
   pinnedId: "",
 });
@@ -72,6 +74,8 @@ const hostBusy = ref("");
 const hostError = ref("");
 const micBusy = ref(false);
 const cameraBusy = ref(false);
+let spaceHeld = false;
+let pushToTalkOwned = false;
 let disposed = false;
 let currentRoom = null;
 let offDisconnected = null;
@@ -334,16 +338,39 @@ async function start() {
     initializing.value = false;
   }
 }
-async function toggleMic() {
+async function toggleMic(target = !micEnabled.value) {
   if (!currentRoom || micBusy.value) return;
   micBusy.value = true;
   try {
-    await currentRoom.localParticipant.setMicrophoneEnabled(!micEnabled.value);
+    await currentRoom.localParticipant.setMicrophoneEnabled(target);
     refreshDevices();
   } catch (e) {
     error.value = e;
   } finally {
     micBusy.value = false;
+  }
+}
+function manualToggleMic() {
+  pushToTalkOwned = false;
+  spaceHeld = false;
+  void toggleMic();
+}
+async function beginPushToTalk() {
+  if (!currentRoom || micEnabled.value || micBusy.value || spaceHeld) return;
+  spaceHeld = true;
+  pushToTalkOwned = true;
+  await toggleMic(true);
+  if (!spaceHeld && pushToTalkOwned) {
+    if (micEnabled.value) await toggleMic(false);
+    pushToTalkOwned = false;
+  }
+}
+function releasePushToTalk() {
+  if (!spaceHeld && !pushToTalkOwned) return;
+  spaceHeld = false;
+  if (pushToTalkOwned && micEnabled.value && !micBusy.value) {
+    pushToTalkOwned = false;
+    void toggleMic(false);
   }
 }
 async function toggleCamera() {
@@ -447,19 +474,35 @@ async function cleanup() {
   await live.leave();
 }
 function onShortcut(event) {
-  if (!connected.value || !event.altKey || event.ctrlKey || event.metaKey || event.repeat || ['INPUT','TEXTAREA','SELECT'].includes(event.target?.tagName) || event.target?.isContentEditable) return;
-  const key = event.key.toLowerCase();
-  if (!['m','v','s','h'].includes(key)) return;
+  if (!connected.value) return;
+  const whiteboardVisible = Boolean(document.querySelector('.ms-board canvas')?.getClientRects().length);
+  if (event.code === 'Space' && !whiteboardVisible && !event.altKey && !event.ctrlKey && !event.metaKey && !isMeetingShortcutTarget(event) && (spaceHeld || !micEnabled.value)) {
+    event.preventDefault();
+    if (!event.repeat) void beginPushToTalk();
+    return;
+  }
+  const key = meetingShortcutKey(event);
+  if (!['m','v','s','h','r'].includes(key)) return;
+  if (key === 'r' && !isHost.value) return;
+  if (key === 's' && !features.value.screenShare || key === 'h' && !features.value.raiseHand) return;
   event.preventDefault();
-  if (key === 'm') void toggleMic();
+  if (key === 'm') manualToggleMic();
   if (key === 'v') void toggleCamera();
   if (key === 's') void toggleShare();
   if (key === 'h') void toggleHand();
+  if (key === 'r') void toggleRecording();
 }
-onMounted(() => { window.addEventListener('keydown', onShortcut); void start(); });
+function onKeyup(event) { if (event.code === 'Space') releasePushToTalk(); }
+function onVisibilityChange() { if (document.hidden) releasePushToTalk(); }
+onMounted(() => { window.addEventListener('keydown', onShortcut); window.addEventListener('keyup', onKeyup); window.addEventListener('blur', releasePushToTalk); document.addEventListener('visibilitychange', onVisibilityChange); void start(); });
 onBeforeUnmount(() => {
   disposed = true;
   window.removeEventListener('keydown', onShortcut);
+  window.removeEventListener('keyup', onKeyup);
+  window.removeEventListener('blur', releasePushToTalk);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  spaceHeld = false;
+  pushToTalkOwned = false;
   void cleanup();
 });
 useErrorToast(error, hostError);
@@ -504,7 +547,7 @@ useErrorToast(error, hostError);
     @background="background.setMode"
     @background-image="background.addImage"
     @low-data="network.setLowData"
-    @mic="toggleMic"
+    @mic="manualToggleMic"
     @camera="toggleCamera"
     @share="toggleShare"
     @hand="toggleHand"

@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, ref, shallowRef, unref, watch } from 'vue'
 import { ConnectionState, RoomEvent } from 'livekit-client'
+import { COUPLE_STICKERS, COUPLE_CHALLENGES } from '../config/coupleInteractions.js'
 
 const TOPIC = 'meetspace.game.v1'
 const encoder = new TextEncoder()
@@ -7,6 +8,8 @@ const decoder = new TextDecoder()
 const MAX_BYTES = 24_000
 const randomId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
 const clone = (value) => JSON.parse(JSON.stringify(value))
+const stickerIds = new Set(COUPLE_STICKERS.map(item => item.id))
+const challengeIds = new Set(COUPLE_CHALLENGES.map(item => item.id))
 
 /**
  * Host-coordinated live game state. NOT a security boundary:
@@ -23,6 +26,7 @@ export function useGameSync({ room, hostIdentity, reduceAction } = {}) {
   const participants = ref([])
   const localIdentity = ref('')
   const eventLog = ref([])
+  const interactions = shallowRef([])
   const clockOffsetMs = ref(0)
   const isHost = computed(() => !!localIdentity.value && localIdentity.value === unref(hostIdentity))
   const gameId = computed(() => session.value?.gameId || '')
@@ -33,6 +37,8 @@ export function useGameSync({ room, hostIdentity, reduceAction } = {}) {
   let requestedAt = 0
   let requestTimer = null
   const seen = new Set()
+  const lastInteractionBySender = new Map()
+  let lastInteractionSentAt = 0
 
   function identities() {
     if (!attached) return []
@@ -171,6 +177,34 @@ export function useGameSync({ room, hostIdentity, reduceAction } = {}) {
     return transmit({ kind: 'action', sessionId: session.value.sessionId, action }, [unref(hostIdentity)])
   }
 
+  function recordInteraction(item) {
+    if (interactions.value.some(entry => entry.eventId === item.eventId)) return
+    const current = interactions.value
+    const pending = current.filter(entry => entry.type === 'challenge' && entry.status === 'pending' && Date.now() - entry.at < 600_000).slice(-8)
+    const recent = current.filter(entry => Date.now() - entry.at < 90_000).slice(-19)
+    interactions.value = [...new Map([...pending, ...recent, item].map(entry => [entry.eventId, entry])).values()].sort((a, b) => a.at - b.at)
+  }
+
+  async function sendInteraction(type, itemId, target = '') {
+    if (!connected.value || !localIdentity.value || Date.now() - lastInteractionSentAt < 1200) return false
+    if (type === 'sticker' ? !stickerIds.has(itemId) : type === 'challenge' ? !challengeIds.has(itemId) : true) return false
+    if (type === 'challenge' && (!target || target === localIdentity.value || !identities().includes(target))) return false
+    const eventId = randomId()
+    const ok = await transmit({ kind: 'interaction', eventId, type, itemId, target })
+    if (!ok) return false
+    lastInteractionSentAt = Date.now()
+    recordInteraction({ eventId, type, itemId, target, from: localIdentity.value, at: Date.now(), status: 'pending' })
+    return true
+  }
+
+  async function respondInteraction(eventId, accepted) {
+    const item = interactions.value.find(entry => entry.eventId === eventId)
+    if (!item || item.type !== 'challenge' || item.target !== localIdentity.value || item.status !== 'pending' || typeof accepted !== 'boolean') return false
+    const ok = await transmit({ kind: 'interaction-response', eventId, accepted })
+    if (ok) interactions.value = interactions.value.map(entry => entry.eventId === eventId ? { ...entry, status: accepted ? 'accepted' : 'skipped', respondedAt: Date.now() } : entry)
+    return ok
+  }
+
   async function applyAction(action, actor) {
     if (!isHost.value || !session.value || session.value.paused) return false
     if (!session.value.players.includes(actor) || !identities().includes(actor)) return false
@@ -213,6 +247,16 @@ export function useGameSync({ room, hostIdentity, reduceAction } = {}) {
       if (isHost.value && packet.sessionId === session.value?.sessionId) {
         void applyAction(packet.action, sender)
       }
+    } else if (packet.kind === 'interaction') {
+      if (!identities().includes(sender) || typeof packet.eventId !== 'string' || packet.eventId.length > 100 || !Number.isFinite(packet.sentAt) || Math.abs(Date.now() - packet.sentAt) > 30_000) return
+      if (packet.type === 'sticker' ? !stickerIds.has(packet.itemId) : packet.type === 'challenge' ? !challengeIds.has(packet.itemId) : true) return
+      if (packet.type === 'challenge' && (!packet.target || packet.target === sender || !identities().includes(packet.target))) return
+      if (Date.now() - (lastInteractionBySender.get(sender) || 0) < 1100) return
+      lastInteractionBySender.set(sender, Date.now())
+      recordInteraction({ eventId: packet.eventId, type: packet.type, itemId: packet.itemId, target: packet.target || '', from: sender, at: Date.now(), status: 'pending' })
+    } else if (packet.kind === 'interaction-response') {
+      if (typeof packet.eventId !== 'string' || typeof packet.accepted !== 'boolean') return
+      interactions.value = interactions.value.map(entry => entry.eventId === packet.eventId && entry.type === 'challenge' && entry.target === sender && entry.status === 'pending' ? { ...entry, status: packet.accepted ? 'accepted' : 'skipped', respondedAt: Date.now() } : entry)
     }
   }
 
@@ -248,6 +292,8 @@ export function useGameSync({ room, hostIdentity, reduceAction } = {}) {
     detach()
     session.value = null
     seen.clear()
+    interactions.value = []
+    lastInteractionBySender.clear()
     attached = nextRoom || null
     if (!attached) return
     attached.on(RoomEvent.DataReceived, onData)
@@ -270,7 +316,8 @@ export function useGameSync({ room, hostIdentity, reduceAction } = {}) {
 
   return {
     session, gameId, gameState, gamePaused, revision,
-    connected, syncing, lastError, participants, localIdentity, isHost, eventLog, clockOffsetMs,
+    connected, syncing, lastError, participants, localIdentity, isHost, eventLog, interactions, clockOffsetMs,
     startGame, dispatchAction, updateHostState, setPaused, restartGame, endGame, requestSnapshot,
+    sendInteraction, respondInteraction,
   }
 }

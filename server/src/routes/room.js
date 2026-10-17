@@ -15,7 +15,7 @@ import {
   muteParticipant,
   participantPermission,
 } from "../services/livekit.service.js";
-import { requireFullAccess, getAccount } from "../services/account.service.js";
+import { requireFullAccess, getAccount, hasVerifiedEmail, hasPrivilegedSession, privilegedSessionMessage } from "../services/account.service.js";
 import {
   createRoom,
   startRoom,
@@ -30,6 +30,7 @@ import {
   publicRoom,
 } from "../services/roomPassword.service.js";
 import { meetingIcs, normalizeSchedule, nextScheduledAt } from '../services/meetingSchedule.service.js';
+import { rateLimit } from '../services/rateLimit.service.js';
 
 const router = Router();
 router.use(optionalAuth);
@@ -60,8 +61,9 @@ for (const parameter of ["roomId", "requestId"]) {
 }
 
 // Look up a numeric Meeting ID without bypassing existing approval.
-// Add rate limiting to this endpoint before deploying publicly.
-router.get("/by-code/:meetingId", async (req, res) => {
+router.get("/by-code/:meetingId", rateLimit([
+  { scope: 'meeting-code', limit: 30, windowMs: 5 * 60_000 },
+]), async (req, res) => {
   try {
     const code = req.params.meetingId.replace(/[\s-]/g, "");
     if (!/^\d{10}$/.test(code))
@@ -167,7 +169,10 @@ router.get("/:roomId", async (req, res) => {
 });
 
 // Public guests can request admission but receive NO LiveKit token yet.
-router.post("/:roomId/join-requests", async (req, res) => {
+router.post("/:roomId/join-requests", rateLimit(req => [
+  { scope: 'waiting-room-global', limit: 30, windowMs: 60 * 60_000 },
+  { scope: `waiting-room:${req.params.roomId}`, limit: 8, windowMs: 10 * 60_000 },
+]), async (req, res) => {
   try {
     const name = clean(req.body?.participantName, 50);
     if (
@@ -176,6 +181,11 @@ router.post("/:roomId/join-requests", async (req, res) => {
       req.body.participantName.trim().length > 50
     )
       return fail(res, 400, "Participant name must be 1–50 characters");
+    if (req.user?.uid && !hasVerifiedEmail(req.user)) return res.status(403).json({
+      success: false,
+      code: 'EMAIL_NOT_VERIFIED',
+      message: 'Buka link verifikasi dari emailmu sebelum bergabung memakai akun ini.',
+    });
     const room = await roomRef(req.params.roomId).get();
     if (!room.exists || room.data().status !== "active")
       return fail(res, 404, "Room not found");
@@ -200,6 +210,7 @@ router.post("/:roomId/join-requests", async (req, res) => {
       createdAt: Date.now(),
       expiresAt: Date.now() + 3600000,
       ...(req.user?.uid ? { userUid: req.user.uid } : {}),
+      ...(req.user?.uid ? { emailVerifiedAtRequest: hasVerifiedEmail(req.user) } : {}),
     });
     res
       .status(201)
@@ -267,12 +278,20 @@ async function hostRoom(req, res) {
     return null;
   }
   if (doc.data().hostUid === req.user.uid) {
+    if (!hasPrivilegedSession(req.user)) {
+      fail(res, 403, privilegedSessionMessage(req.user));
+      return null;
+    }
     if ((await getAccount(req.user.uid)).access !== "full") {
       fail(res, 403, "Akses host telah dicabut. Hubungi admin.");
       return null;
     }
   } else if (!(await approvedCoHost(doc.id, doc.data(), req.user.uid))) {
     fail(res, 403, "Izin co-host tidak aktif atau persetujuan peserta telah berakhir.");
+    return null;
+  }
+  if (!hasPrivilegedSession(req.user)) {
+    fail(res, 403, privilegedSessionMessage(req.user));
     return null;
   }
   return doc;
@@ -348,6 +367,8 @@ router.post("/:roomId/token", async (req, res) => {
     const isOwner = Boolean(req.user && req.user.uid === doc.data().hostUid);
     let credentials;
     if (isOwner) {
+      if (!hasPrivilegedSession(req.user))
+        return fail(res, 403, privilegedSessionMessage(req.user));
       if ((await getAccount(req.user.uid)).access !== "full")
         return fail(
           res,
@@ -396,7 +417,7 @@ router.post("/:roomId/token", async (req, res) => {
           )
             return null;
         }
-        const coHostForToken = Boolean(req.user?.uid && guest.data().userUid === req.user.uid &&
+        const coHostForToken = Boolean(hasPrivilegedSession(req.user) && req.user?.uid && guest.data().userUid === req.user.uid &&
           (latestRoom.data().coHostUids || []).includes(req.user.uid) &&
           (latestRoom.data().coHostRequestIds || []).includes(requestId));
         if (roomSecurity(latestRoom.data()).locked && !guest.data().lastTokenIssuedAt && !coHostForToken) return null;
@@ -435,12 +456,18 @@ router.get("/:roomId/my-role", async (req, res) => {
     const doc = await roomRef(req.params.roomId).get();
     if (!doc.exists || doc.data().status !== "active")
       return fail(res, 404, "Room not found");
-    const isOwner = Boolean(req.user?.uid && req.user.uid === doc.data().hostUid);
+    const ownsRoom = Boolean(req.user?.uid && req.user.uid === doc.data().hostUid);
+    const privileged = hasPrivilegedSession(req.user);
+    if (ownsRoom && !privileged) return res.status(403).json({
+      success: false,
+      code: 'EMAIL_NOT_VERIFIED',
+      message: privilegedSessionMessage(req.user),
+    });
     res.json({
       success: true,
       data: {
-        isHost: isOwner || await approvedCoHost(doc.id, doc.data(), req.user?.uid),
-        isOwner,
+        isHost: ownsRoom || (privileged && await approvedCoHost(doc.id, doc.data(), req.user?.uid)),
+        isOwner: ownsRoom,
       },
     });
   } catch (e) {
@@ -501,6 +528,7 @@ router.post('/:roomId/cohosts/:identity', requireAuth, async (req, res) => {
     const room = await roomRef(req.params.roomId).get();
     if (!room.exists || room.data().status !== 'active') return fail(res, 404, 'Room tidak ditemukan.');
     if (room.data().hostUid !== req.user.uid) return fail(res, 403, 'Hanya pemilik room yang dapat mengatur co-host.');
+    if (!hasPrivilegedSession(req.user)) return fail(res, 403, privilegedSessionMessage(req.user));
     if ((await getAccount(req.user.uid)).access !== 'full') return fail(res, 403, 'Akses host telah dicabut. Hubungi admin.');
     if (room.data().mode !== 'professional') return fail(res, 400, 'Co-host hanya untuk Professional Room.');
     const identity = req.params.identity;
@@ -514,6 +542,7 @@ router.post('/:roomId/cohosts/:identity', requireAuth, async (req, res) => {
       const guest = await tx.get(reqRef(room.id, identity.slice(6)));
       if (!guest.exists) return 'missing';
       if (!guest.data().userUid) return 'login';
+      if (grant && !guest.data().emailVerifiedAtRequest) return 'verify';
       if (grant && (guest.data().status !== 'approved' || guest.data().expiresAt <= Date.now())) return 'approval';
       const uid = guest.data().userUid;
       const requestId = identity.slice(6);
@@ -529,6 +558,7 @@ router.post('/:roomId/cohosts/:identity', requireAuth, async (req, res) => {
     if (result === 'forbidden') return fail(res, 403, 'Hanya pemilik room yang dapat mengatur co-host.');
     if (result === 'missing') return fail(res, 404, 'Peserta tidak ditemukan.');
     if (result === 'login') return fail(res, 403, 'Peserta ini bergabung tanpa login. Minta peserta login dan bergabung ulang sebelum dijadikan co-host.');
+    if (result === 'verify') return fail(res, 403, 'Peserta perlu memverifikasi email dan bergabung ulang sebelum dijadikan co-host.');
     if (result === 'approval') return fail(res, 403, 'Persetujuan peserta tidak aktif. Minta peserta bergabung ulang sebelum dijadikan co-host.');
     if (result === 'limit') return fail(res, 409, 'Maksimal lima co-host.');
     try {
@@ -652,7 +682,13 @@ async function admittedRoom(req, res) {
     fail(res, 404, "Room not found");
     return null;
   }
-  if (req.user?.uid === room.data().hostUid) return { room, guest: null };
+  if (req.user?.uid === room.data().hostUid) {
+    if (!hasPrivilegedSession(req.user)) {
+      fail(res, 403, privilegedSessionMessage(req.user));
+      return null;
+    }
+    return { room, guest: null };
+  }
   const guest = await guestRequest(req, res, {
     requestId: req.body?.requestId || req.headers["x-meetspace-request-id"],
     guestSecret:
@@ -712,7 +748,7 @@ router.post('/:roomId/chat', async (req, res) => {
   } catch (error) { console.error('Send chat:', error); fail(res, 503, 'Pesan belum terkirim.'); }
 });
 const pollRef = (roomId, pollId) => roomRef(roomId).collection('polls').doc(pollId);
-const isModerator = (req, room, guest) => Boolean(req.user?.uid &&
+const isModerator = (req, room, guest) => Boolean(hasPrivilegedSession(req.user) && req.user?.uid &&
   (req.user.uid === room.hostUid || (guest?.exists &&
     (room.coHostUids || []).includes(req.user.uid) &&
     (room.coHostRequestIds || []).includes(guest.id) &&
@@ -1059,6 +1095,7 @@ router.post('/:roomId/end-session', requireAuth, async (req, res) => {
     const room = await roomRef(req.params.roomId).get();
     if (!room.exists || room.data().status !== 'active') return fail(res, 404, 'Room tidak ditemukan.');
     if (room.data().hostUid !== req.user.uid) return fail(res, 403, 'Hanya pemilik room yang dapat mengakhiri sesi.');
+    if (!hasPrivilegedSession(req.user)) return fail(res, 403, privilegedSessionMessage(req.user));
     if (room.data().schedule?.repeat !== 'weekly' || room.data().parentRoomId)
       return fail(res, 400, 'Hanya room mingguan utama yang dapat memulai sesi berikutnya.');
     const ids = await db.runTransaction(async (tx) => {
@@ -1088,6 +1125,7 @@ router.post("/:roomId/end", requireAuth, async (req, res) => {
     if (!doc.exists) return fail(res, 404, "Room not found");
     if (doc.data().hostUid !== req.user.uid)
       return fail(res, 403, "Host permission required");
+    if (!hasPrivilegedSession(req.user)) return fail(res, 403, privilegedSessionMessage(req.user));
     // Close admission first; retrying this endpoint is safe after a provider failure.
     const ids = await db.runTransaction(async (tx) => {
       const latest = await tx.get(roomRef(doc.id));

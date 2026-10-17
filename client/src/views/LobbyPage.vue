@@ -35,6 +35,9 @@ async function copyMeetingId() {
 
 const loading = ref(true);
 const error = ref("");
+const hostAccessBlocked = computed(() =>
+  error.value?.response?.data?.code === 'EMAIL_NOT_VERIFIED',
+);
 const displayName = ref("");
 const isHost = ref(false);
 const cameraEnabled = ref(false);
@@ -329,9 +332,10 @@ useErrorToast(error, mediaError);
       </section>
       <section v-else-if="error" class="status-card retro-card" role="alert">
         <span class="status-icon">!</span>
-        <h2>Oops, no room here!</h2>
-        <p>Periksa kembali undanganmu atau coba memuat room lagi.</p>
-        <button class="retro-button action" type="button" @click="goBack">
+        <h2>{{ hostAccessBlocked ? 'Akses host perlu dilengkapi' : 'Oops, no room here!' }}</h2>
+        <p>{{ hostAccessBlocked ? error.response.data.message : 'Periksa kembali undanganmu atau coba memuat room lagi.' }}</p>
+        <RouterLink v-if="hostAccessBlocked" class="retro-button action" to="/account">Buka Akun →</RouterLink>
+        <button v-else class="retro-button action" type="button" @click="goBack">
           Create a new space →
         </button>
       </section>

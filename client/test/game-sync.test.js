@@ -90,6 +90,30 @@ test('late participant requests the current game state from the host', async () 
   } finally { hostScope.stop(); guestScope.stop() }
 })
 
+test('stickers and optional challenges reach both partners and the target can respond', async () => {
+  const add = linkedRooms()
+  const hostRoom = add('host-a')
+  const guestRoom = add('guest-b')
+  const hostScope = effectScope(), guestScope = effectScope()
+  const hostId = ref('host-a')
+  const host = hostScope.run(() => useGameSync({ room: ref(hostRoom), hostIdentity: hostId }))
+  const guest = guestScope.run(() => useGameSync({ room: ref(guestRoom), hostIdentity: hostId }))
+  try {
+    assert.equal(await host.sendInteraction('sticker', 'heart'), true)
+    await flush()
+    assert.equal(guest.interactions.value.at(-1).itemId, 'heart')
+    assert.equal(await guest.sendInteraction('challenge', 'compliment', 'host-a'), true)
+    await flush()
+    const challenge = host.interactions.value.at(-1)
+    assert.equal(challenge.target, 'host-a')
+    assert.equal(await guest.respondInteraction(challenge.eventId, true), false)
+    assert.equal(await host.respondInteraction(challenge.eventId, true), true)
+    await flush()
+    assert.equal(guest.interactions.value.at(-1).status, 'accepted')
+    assert.equal(await host.sendInteraction('sticker', 'unknown'), false)
+  } finally { hostScope.stop(); guestScope.stop() }
+})
+
 test('Watch Party shares host video, play/pause/seek and restores playback for a late guest', async () => {
   const add = linkedRooms()
   const hostRoom = add('host-a')

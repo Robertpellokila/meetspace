@@ -9,7 +9,8 @@
     "firebase-admin/firestore": "./src/platform/firestore-worker.js"
   },
   "vars": {
-    "FIRESTORE_PREFER_REST": "true"
+    "FIRESTORE_PREFER_REST": "true",
+    "RATE_LIMIT_TRUST_CF_IP": "true"
   },
   "observability": {
     "enabled": true

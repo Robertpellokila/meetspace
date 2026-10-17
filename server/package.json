@@ -10,7 +10,8 @@
     "test": "node --experimental-test-module-mocks --test",
     "worker:dev": "wrangler dev",
     "worker:check": "wrangler deploy --dry-run",
-    "worker:deploy": "wrangler deploy"
+    "worker:deploy": "wrangler deploy",
+    "auth:remove-old-mfa": "node scripts/remove-admin-mfa.js"
   },
   "keywords": [],
   "author": "",

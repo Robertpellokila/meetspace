@@ -8,6 +8,7 @@ const props = defineProps({
     contain: { type: Boolean, default: false },
     handRaised: Boolean,
     isSpeaking: Boolean,
+    micMuted: { type: Boolean, default: null },
     pinnable: Boolean,
     pinned: Boolean,
 });
@@ -65,8 +66,9 @@ watch(
         </button>
         <div class="ms-tile-label">
             <span v-if="isSpeaking" class="speaking-bars" role="img" :aria-label="`${name} sedang berbicara`"><i></i><i></i><i></i></span>
-            {{ name }} <small v-if="isLocal">(You)</small>
-            <span v-if="isSpeaking" class="speaking-label"> · Bicara</span>
+            <span class="participant-name">{{ name }} <small v-if="isLocal">(You)</small></span>
+            <span v-if="micMuted !== null" class="mic-indicator" :class="{ muted: micMuted }" role="img" :aria-label="micMuted ? 'Mikrofon mati' : 'Mikrofon hidup'" :title="micMuted ? 'Mikrofon mati' : 'Mikrofon hidup'">{{ micMuted ? '🔇' : '🎙' }}</span>
+            <span v-if="isSpeaking" class="speaking-label">Bicara</span>
         </div>
     </article>
 </template>
@@ -113,6 +115,9 @@ video.mirror {
 }
 .ms-tile-label {
     position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 4px;
     bottom: 6px;
     left: 7px;
     max-width: calc(100% - 14px);
@@ -129,6 +134,9 @@ video.mirror {
 .ms-tile-label small {
     font-weight: 400;
 }
+.participant-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mic-indicator { display:inline-flex; align-items:center; flex:none; font-size:12px; line-height:1; }
+.speaking-label { flex:none; }
 .ms-raised-hand {
     position: absolute;
     right: 7px;

@@ -30,6 +30,12 @@ atau `FIREBASE_SERVICE_ACCOUNT_JSON` di environment server. Jangan memasukkan
 kredensial Admin ke variabel `VITE_*`. Konfigurasi LiveKit menggunakan URL,
 API key, dan API secret dari project LiveKit yang sama.
 
+Pendaftaran lokal memerlukan `RATE_LIMIT_SECRET` acak minimal 32 karakter di
+`server/.env`. Link verifikasi email dikirim langsung oleh Firebase Authentication;
+tidak ada API key layanan email tambahan. Pastikan template **Email address
+verification** tersedia di Firebase Authentication. Setelah mengubah `.env`, mulai ulang server. Langkahnya
+dijelaskan di [CLOUDFLARE_DEPLOY.md](./CLOUDFLARE_DEPLOY.md).
+
 Jalankan perintah berikut dari folder masing-masing, pada dua terminal:
 
 ```sh
@@ -131,15 +137,22 @@ memakai toast retro; kode Firebase diterjemahkan menjadi pesan yang bisa ditinda
 Menu **Akun → Logout** tersedia di homepage, lobby, create room, dan meeting.
 Logout memutus koneksi media dan membersihkan kredensial approval di tab tersebut.
 
-- Pendaftaran Firebase terbuka. Akun baru memiliki akses `pending`: dapat bergabung
-  sebagai peserta, tetapi belum boleh membuat atau memulai sesi host.
+- Pendaftaran Firebase terbuka. Setelah link email diverifikasi, akun baru
+  memiliki akses `pending`: dapat bergabung sebagai peserta, tetapi belum boleh
+  membuat atau memulai sesi host.
+- Pendaftaran mengirim link verifikasi Firebase sekali; setelah verifikasi, login berikutnya
+  cukup email dan password. Tombol Google memakai Firebase Google Sign-In, dan
+  **Lupa password?** tetap mengirim link reset. Email terverifikasi wajib untuk host/admin.
 - Halaman `/account` menampilkan status akses dan tombol **Periksa akses lagi**.
 - Admin ditetapkan lewat `ADMIN_UIDS` di `server/.env`, berisi Firebase Authentication
   UID, dipisahkan koma jika lebih dari satu. Restart server setelah mengubah `.env`.
   Role dari browser atau field `role` di dokumen akun tidak memberi hak admin.
 - `/admin` menyediakan daftar akun (50 per halaman), pencarian email lengkap,
   pemberian/pencabutan akses host, statistik penggunaan, sesi terbaru, serta audit
-  perubahan akses. Akun tercatat setelah aplikasi menyinkronkan profil ke backend.
+  perubahan akses. Admin masuk dengan email/password atau Google. Akun
+  tercatat setelah aplikasi menyinkronkan profil ke backend.
+- `RATE_LIMIT_SECRET` backend wajib diisi untuk limit registrasi melalui situs,
+  lookup Meeting ID, dan permintaan waiting room; counter disimpan di Firestore.
 - Backend memeriksa akses pada pembuatan room, penerbitan token host, dan moderasi.
   Pencabutan akses tidak otomatis memutus sesi yang sudah terhubung. Host tetap
   dapat mengakhiri room miliknya. Menutup koneksi aktif perlu aksi End/Remove.
@@ -148,7 +161,9 @@ Logout memutus koneksi media dan membersihkan kredensial approval di tab tersebu
 
 1. Konfigurasikan kredensial Firebase Admin di `server/.env` menggunakan salah satu
    cara dalam `.env.example`. Jangan memasukkan service-account key ke client.
-2. Isi `ADMIN_UIDS`, restart backend, lalu login memakai akun dengan UID tersebut.
+2. Isi `ADMIN_UIDS` dan `RATE_LIMIT_SECRET`. Aktifkan template verifikasi email
+   serta provider Google jika tombol Google dipakai. Restart backend, lalu login dengan
+   akun admin yang emailnya sudah diverifikasi.
 3. Di proyek LiveKit, tambahkan webhook ke
    `https://BACKEND_ANDA/api/webhooks/livekit` untuk event `room_started`,
    `room_finished`, `participant_joined`, dan `participant_left`. Backend harus
@@ -311,10 +326,13 @@ dan Mood Manager belum lengkap.
 
 ## Game Night
 
-Lima game native tersedia: Couple Quiz, Truth or Dare, Tic Tac Toe, Would You
-Rather, dan Memory Match. Host memilih game dan mengendalikan pause, restart,
+Delapan game native tersedia: Couple Quiz, Truth or Dare, Tic Tac Toe, Would You
+Rather, Memory Match, Bingo Kencan, Tebak Emoji, dan Cerita Sambung. Host memilih game dan mengendalikan pause, restart,
 serta akhir sesi. Aksi dan skor disinkron lewat LiveKit DataChannel; peserta yang
 masuk belakangan meminta snapshot dari host. Kamera peserta tetap terlihat.
+Peserta juga dapat mengirim stiker animasi dan tantangan lucu ke peserta lain;
+penerima dapat menerima atau melewati tantangan. Interaksi ini hanya tersimpan
+selama sesi aktif.
 Sesi game berada di memori host; jika host memuat ulang halaman, game aktif perlu
 dimulai lagi. Ini adalah permainan santai, bukan sistem anti-cheat untuk hadiah.
 

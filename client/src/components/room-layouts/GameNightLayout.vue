@@ -4,6 +4,7 @@ import ScreenShareStage from "../meeting/ScreenShareStage.vue";
 import ParticipantGallery from "../meeting/ParticipantGallery.vue";
 import GameLibrary from "../games/GameLibrary.vue";
 import GameStage from "../games/GameStage.vue";
+import GameInteractionDock from "../games/GameInteractionDock.vue";
 import { useGameSync } from "../../composables/useGameSync.js";
 import { reduceGameAction } from "../../composables/gameReducers.js";
 import { applyGameCatalog, getGameById } from "../../config/gameCatalog.js";
@@ -97,6 +98,12 @@ async function dispatchGameAction(payload) {
   if (!canSendAction.value || !payload || payload.gameId !== sync.gameId.value)
     return;
   await sync.dispatchAction(payload.action);
+}
+async function sendGameInteraction(type, id, target) {
+  if (!await sync.sendInteraction(type, id, target)) toast.info('Interaksi belum terkirim. Tunggu sebentar lalu coba lagi.');
+}
+async function respondGameInteraction(eventId, accepted) {
+  if (!await sync.respondInteraction(eventId, accepted)) toast.info('Jawaban tantangan belum terkirim. Coba lagi.');
 }
 async function requestRestart() {
   if (!sync.isHost.value) return;
@@ -260,6 +267,15 @@ watch(
           <h2>Game unavailable</h2>
           <p>Ask the host to select an available game.</p>
         </div>
+        <GameInteractionDock
+          :interactions="sync.interactions.value"
+          :identities="sync.participants.value"
+          :participants="participants"
+          :local-identity="sync.localIdentity.value"
+          :connected="sync.connected.value"
+          @send="sendGameInteraction"
+          @respond="respondGameInteraction"
+        />
       </div>
 
       <div

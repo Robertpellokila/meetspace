@@ -16,11 +16,48 @@ import RoomSoundboard from './RoomSoundboard.vue'
 import { useRoomSoundEffects } from '../../composables/useRoomSoundEffects.js'
 import { moods, resolveMood } from '../../config/moods.js'
 import { useAppearanceStore } from '../../stores/appearance'
+import { meetingLayoutOrder, meetingShortcutKey } from '../../config/meetingShortcuts.js'
 const props = defineProps({ room:{type:Object,required:true}, livekitRoom:{type:Object,default:null}, participants:{type:Array,default:()=>[]}, messages:{type:Array,default:()=>[]}, chatAllowed:{type:Boolean,default:true}, micEnabled:Boolean, cameraEnabled:Boolean, micBusy:Boolean, cameraBusy:Boolean, sharing:Boolean, shareBusy:Boolean, canShare:Boolean, handRaised:Boolean, handBusy:Boolean, isHost:Boolean, isOwner:Boolean, hostBusy:String, hostError:String, features:{type:Object,default:()=>({})}, options:{type:Object,default:()=>({view:{}})},elapsed:String,recording:Boolean,recordBusy:Boolean,reactions:{type:Array,default:()=>[]} })
 const emit = defineEmits(['mic','camera','share','hand','moderate','leave','audio','send','view','device','refresh-devices','fullscreen','invite','copy-room-id','move','record','end','reaction','background','background-image','low-data'])
 const appearance = useAppearanceStore()
 const router = useRouter()
 const panel = ref('')
+const panelOpen = computed(() => Boolean(panel.value && panel.value !== 'breakouts'))
+const headerEl = ref(null), headerHeight = ref(60)
+let headerObserver
+const chromeVisible = ref(true)
+const autoHideControls = computed(() => props.options.view?.autoHideControls !== false)
+let chromeTimer, chromeHovered = false
+function scheduleChromeHide() {
+  clearTimeout(chromeTimer)
+  if (!autoHideControls.value || chromeHovered || panelOpen.value) return
+  chromeTimer = setTimeout(() => { if (!chromeHovered) chromeVisible.value = false }, 2800)
+}
+function revealChrome() { chromeVisible.value = true; scheduleChromeHide() }
+function onChromePointerMove(event) {
+  if (panelOpen.value) return
+  if (event.clientY < 76 || event.clientY > window.innerHeight - 86) revealChrome()
+}
+function onChromeEnter() { chromeHovered = true; clearTimeout(chromeTimer); chromeVisible.value = true }
+function onChromeLeave() { chromeHovered = false; scheduleChromeHide() }
+watch(autoHideControls, (enabled) => { chromeVisible.value = true; if (enabled) scheduleChromeHide(); else clearTimeout(chromeTimer) })
+watch(panelOpen, (open) => { chromeVisible.value = true; if (open) clearTimeout(chromeTimer); else scheduleChromeHide() })
+function onShellShortcut(event) {
+  const key = meetingShortcutKey(event)
+  const panels = { p:'participants', c:'chat', e:'reactions', x:'sounds', b:'breakouts', o:'polls', k:'security', t:'tools' }
+  if (panels[key]) {
+    if (key === 'c' && !props.features.chat || key === 'e' && !props.features.reactions || ['b','o'].includes(key) && props.room.mode !== 'professional' || key === 'k' && !(props.room.mode === 'professional' && props.isHost)) return
+    event.preventDefault(); togglePanel(panels[key]); revealChrome(); return
+  }
+  if (key === 'g' && props.room.mode === 'professional') {
+    event.preventDefault()
+    const current = meetingLayoutOrder.indexOf(props.options.view?.layout)
+    emit('view', { layout: meetingLayoutOrder[(current + 1) % meetingLayoutOrder.length] })
+  } else if (key === 'd') { event.preventDefault(); emit('view', { autoHideControls: props.options.view?.autoHideControls === false }); revealChrome() }
+  else if (key === 'f') { event.preventDefault(); emit('fullscreen') }
+  else if (key === 'i') { event.preventDefault(); emit('invite') }
+  else if (key === 'u') { event.preventDefault(); enableMeetingAudio() }
+}
 const endDialog=ref(null)
 const breakoutDialog = ref(null), assignmentDialog = ref(null), pendingAssignment = ref(null), assignmentBusy = ref(false)
 let arrivalToast
@@ -99,8 +136,8 @@ const admission=useHostApprovals(()=>props.room.id,()=>props.isHost,(arrivals)=>
   })
 })
 const approvals=computed(()=>({requests:admission.requests.value,busy:admission.busy.value,decide:admission.decide}))
-onMounted(() => { void checkBreakoutUpdates(); breakoutTimer = setInterval(checkBreakoutUpdates, 6000); breakoutClock = setInterval(() => { clockNow.value = Date.now() }, 1000) })
-onBeforeUnmount(()=>{if(arrivalToast)dismissToast(arrivalToast);clearInterval(breakoutTimer);clearInterval(breakoutClock);if(breakoutDialog.value?.open)breakoutDialog.value.close();if(assignmentDialog.value?.open)assignmentDialog.value.close()})
+onMounted(() => { void checkBreakoutUpdates(); breakoutTimer = setInterval(checkBreakoutUpdates, 6000); breakoutClock = setInterval(() => { clockNow.value = Date.now() }, 1000); window.addEventListener('keydown', onShellShortcut); if (headerEl.value) { headerHeight.value = headerEl.value.getBoundingClientRect().height; if (typeof ResizeObserver !== 'undefined') { headerObserver = new ResizeObserver(([entry]) => { headerHeight.value = entry.borderBoxSize?.[0]?.blockSize || entry.target.getBoundingClientRect().height }); headerObserver.observe(headerEl.value) } } scheduleChromeHide() })
+onBeforeUnmount(()=>{if(arrivalToast)dismissToast(arrivalToast);clearInterval(breakoutTimer);clearInterval(breakoutClock);clearTimeout(chromeTimer);headerObserver?.disconnect();window.removeEventListener('keydown',onShellShortcut);if(breakoutDialog.value?.open)breakoutDialog.value.close();if(assignmentDialog.value?.open)assignmentDialog.value.close()})
 const speakers=computed(()=>props.participants.filter(p=>p.isSpeaking).map(p=>p.name).join(', '))
 const activeMood=computed(()=>resolveMood(props.room.theme,props.options.view.background))
 const soundboard=useRoomSoundEffects(toRef(props,'livekitRoom'),computed(()=>props.room.mode))
@@ -114,9 +151,9 @@ watch(panel, async (value) => {
 function enableMeetingAudio() { emit('audio'); void soundboard.enable() }
 </script>
 <template>
-  <div class="ms-meeting-root" :data-background="activeMood" :style="{'--mood-accent':moods[activeMood].accent,'--mood-tile-radius':moods[activeMood].tileRadius,'--mood-avatar-radius':moods[activeMood].avatarRadius,'--mood-frame-style':moods[activeMood].frameStyle}">
-    <header class="ms-meeting-header"><RouterLink class="ms-logo" to="/">✦ MeetSpace</RouterLink><div class="ms-room-name"><small>ON THE AIR · {{ room.mode }} <span v-if="options.view.showTimer">· ◷ {{elapsed}}</span></small><strong>{{ room.name }}</strong><small class="connection-status" role="status">{{['reconnecting','signalReconnecting'].includes(options.network?.state)?'Menghubungkan ulang…':options.network?.quality==='poor'?'● Jaringan lemah':options.network?.quality==='lost'?'● Koneksi terputus':options.network?.quality==='excellent'?'● Koneksi baik':options.network?.quality==='good'?'● Koneksi cukup':'◌ Memeriksa koneksi'}}</small><small v-if="breakoutRemaining!==null" role="timer">▦ Breakout {{String(Math.floor(breakoutRemaining/60)).padStart(2,'0')}}:{{String(breakoutRemaining%60).padStart(2,'0')}}</small><small class="room-mood">{{moods[activeMood].icon}} {{moods[activeMood].name}}</small><small class="active-speakers" :title="speakers">{{speakers ? "♫ " + speakers : "\u00a0"}}</small><small v-if="participants.some(p=>p.recording)" class="recording-indicator" role="status">● Host sedang merekam lokal</small></div><div class="meeting-header-actions"><MoodSoundPlayer :mood="activeMood" /><button class="ms-mode-toggle" @click="appearance.toggleTheme()">{{appearance.isDark?'☀':'☾'}}</button><AccountControls /></div></header>
-    <div class="ms-meeting-body" :class="{ 'has-panel': panel && panel !== 'breakouts' }">
+  <div class="ms-meeting-root" :class="{'chrome-hidden':autoHideControls && !panelOpen && !chromeVisible,'panel-open':panelOpen}" :data-background="activeMood" :style="{'--mood-accent':moods[activeMood].accent,'--mood-tile-radius':moods[activeMood].tileRadius,'--mood-avatar-radius':moods[activeMood].avatarRadius,'--mood-frame-style':moods[activeMood].frameStyle,'--meeting-header-height':`${headerHeight}px`}" @pointermove="onChromePointerMove">
+    <header ref="headerEl" class="ms-meeting-header" @pointerenter="onChromeEnter" @pointerleave="onChromeLeave"><RouterLink class="ms-logo" to="/">✦ MeetSpace</RouterLink><div class="ms-room-name"><small>ON THE AIR · {{ room.mode }} <span v-if="options.view.showTimer">· ◷ {{elapsed}}</span></small><strong>{{ room.name }}</strong><small class="connection-status" role="status">{{['reconnecting','signalReconnecting'].includes(options.network?.state)?'Menghubungkan ulang…':options.network?.quality==='poor'?'● Jaringan lemah':options.network?.quality==='lost'?'● Koneksi terputus':options.network?.quality==='excellent'?'● Koneksi baik':options.network?.quality==='good'?'● Koneksi cukup':'◌ Memeriksa koneksi'}}</small><small v-if="breakoutRemaining!==null" role="timer">▦ Breakout {{String(Math.floor(breakoutRemaining/60)).padStart(2,'0')}}:{{String(breakoutRemaining%60).padStart(2,'0')}}</small><small class="room-mood">{{moods[activeMood].icon}} {{moods[activeMood].name}}</small><small class="active-speakers" :title="speakers">{{speakers ? "♫ " + speakers : "\u00a0"}}</small><small v-if="participants.some(p=>p.recording)" class="recording-indicator" role="status">● Host sedang merekam lokal</small></div><div class="meeting-header-actions"><MoodSoundPlayer :mood="activeMood" /><button class="ms-mode-toggle" @click="appearance.toggleTheme()">{{appearance.isDark?'☀':'☾'}}</button><AccountControls /></div></header>
+    <div class="ms-meeting-body" :class="{ 'has-panel': panelOpen }">
       <main class="ms-meeting-stage"><slot /></main>
       <MeetingSidebar v-if="['participants','chat'].includes(panel)" :panel="panel" :participants="participants" :messages="messages" :can-chat="chatAllowed" :room-id="room.id" :approvals="approvals"
         :is-host="isHost" :can-moderate="isHost && room.mode==='professional'" :host-busy="hostBusy" :host-error="hostError"
@@ -136,18 +173,30 @@ function enableMeetingAudio() { emit('audio'); void soundboard.enable() }
     <dialog ref="assignmentDialog" class="assignment-dialog" aria-labelledby="assignment-dialog-title" @close="pendingAssignment=null" @cancel="assignmentBusy && $event.preventDefault()">
       <div class="assignment-dialog-content"><small>▦ UNDANGAN BREAKOUT</small><h2 id="assignment-dialog-title">Masuk ke {{pendingAssignment?.name || 'ruang kelompok'}}?</h2><p>Fasilitator menugaskanmu ke kelompok ini. Kamu bisa masuk sekarang atau tetap di room ini dan membukanya nanti dari menu Breakout.</p><div class="assignment-dialog-actions"><button class="ms-button ms-button-outline" :disabled="assignmentBusy" @click="closeAssignment">Batal</button><button class="ms-button ms-button-primary" :disabled="assignmentBusy" @click="acceptAssignment">{{assignmentBusy?'Menghubungkan…':'Masuk kelompok ↗'}}</button></div></div>
     </dialog>
-    <MeetingToolbar :features="features" :mic-enabled="micEnabled" :camera-enabled="cameraEnabled"
+    <MeetingToolbar :class="{'share-floating':sharing && room.mode==='professional'}" :features="features" :view="options.view" :mic-enabled="micEnabled" :camera-enabled="cameraEnabled"
       :mic-busy="micBusy" :camera-busy="cameraBusy" :sharing="sharing" :share-busy="shareBusy" :can-share="canShare"
       :hand-raised="handRaised" :hand-busy="handBusy" :panel="panel" :waiting-count="admission.requests.value.length"
       :is-host="isHost" :is-owner="isOwner" :recurring="room.schedule?.repeat==='weekly'" :professional="room.mode==='professional'" :recording="recording" :record-busy="recordBusy"
       @mic="emit('mic')" @camera="emit('camera')" @share="emit('share')" @hand="emit('hand')"
-      @leave="emit('leave')" @audio="enableMeetingAudio" @panel="togglePanel" @record="emit('record')" @end="endDialog.showModal()" />
+      @leave="emit('leave')" @audio="enableMeetingAudio" @panel="togglePanel" @record="emit('record')" @end="endDialog.showModal()" @view="emit('view',$event)" @fullscreen="emit('fullscreen')" @invite="emit('invite')" @pointerenter="onChromeEnter" @pointerleave="onChromeLeave" />
     <div class="meeting-reactions" aria-live="polite"><div v-for="reaction in reactions" :key="reaction.id"><span>{{reaction.emoji}}</span><small>{{reaction.name}}</small></div></div>
     <dialog ref="endDialog" class="ms-card end-dialog" aria-labelledby="end-title"><h2 id="end-title">Akhiri pertemuan ini?</h2><p>Semua peserta di room ini{{room.parentRoomId?'':' dan breakout rooms'}} akan dikeluarkan. {{room.schedule?.repeat==='weekly'?'Akhiri sesi agar link tetap tersedia minggu depan, atau tutup room permanen.':'Undangan room tidak bisa digunakan lagi.'}}</p><div><button class="ms-button ms-button-outline" @click="endDialog.close()">Batal</button><button v-if="room.schedule?.repeat==='weekly'" class="ms-button ms-button-outline" @click="endDialog.close();emit('end',true)">Tutup room permanen</button><button class="ms-button ms-button-pink" @click="endDialog.close();emit('end',false)">{{room.schedule?.repeat==='weekly'?'Akhiri sesi':'Akhiri untuk semua'}}</button></div></dialog>
   </div>
 </template>
 <style scoped>
 .ms-meeting-root { --ms-line:var(--mood-accent,var(--color-secondary,#4F5B2A)); min-height:100dvh; height:100dvh; display:flex;flex-direction:column;overflow:hidden;background:var(--bg-app);color:var(--text-primary); background-image:radial-gradient(color-mix(in srgb,var(--ms-line) 13%,transparent) 1px,transparent 1px);background-size:22px 22px; }
+.ms-meeting-root{position:relative}
+.ms-meeting-header{position:absolute;top:0;left:0;right:0;z-index:35;transition:transform .25s ease,opacity .25s ease}
+.ms-meeting-root :deep(.ms-toolbar){position:absolute;bottom:0;left:0;right:0;z-index:35;transition:transform .25s ease,opacity .25s ease}
+.ms-meeting-root :deep(.ms-toolbar.dragging){transition:none}
+.ms-meeting-root :deep(.ms-toolbar.share-floating){left:50%;right:auto;top:calc(var(--meeting-header-height,60px) + 10px);bottom:auto;width:max-content;max-width:calc(100% - 24px);border:3px solid var(--ms-line);border-radius:17px;box-shadow:7px 8px 0 var(--ms-line);transform:translate(calc(-50% + var(--dock-x,0px)),var(--dock-y,0px))}
+.ms-meeting-root.chrome-hidden .ms-meeting-header:not(:focus-within){transform:translateY(calc(-100% + 7px));pointer-events:none}
+.ms-meeting-root.chrome-hidden :deep(.ms-toolbar:not(:focus-within)){transform:translateY(calc(100% - 7px));pointer-events:none}
+.ms-meeting-root.chrome-hidden :deep(.ms-toolbar.share-floating:not(:focus-within)){transform:translate(-50%,calc(-100% - var(--meeting-header-height,60px) - 20px));opacity:0}
+.ms-meeting-root.panel-open .ms-meeting-header{position:relative;top:auto;left:auto;right:auto;transform:none}
+.ms-meeting-root.panel-open :deep(.ms-toolbar),.ms-meeting-root.panel-open :deep(.ms-toolbar.share-floating){position:relative;top:auto;bottom:auto;left:auto;right:auto;width:100%;max-width:none;border-radius:0;box-shadow:none;transform:none}
+@media(hover:none){.ms-meeting-header{position:relative}.ms-meeting-root :deep(.ms-toolbar),.ms-meeting-root :deep(.ms-toolbar.share-floating){position:relative;top:auto;bottom:auto;left:auto;right:auto;width:100%;max-width:none;border-radius:0;box-shadow:none;transform:none}.ms-meeting-root.chrome-hidden .ms-meeting-header,.ms-meeting-root.chrome-hidden :deep(.ms-toolbar){transform:none!important;opacity:1!important;pointer-events:auto!important}}
+@media(prefers-reduced-motion:reduce){.ms-meeting-header,.ms-meeting-root :deep(.ms-toolbar){transition:none}}
 .ms-meeting-header {flex:none;min-height:75px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 24px;border-bottom:3px solid var(--ms-line);background:var(--bg-surface);}
 .ms-logo{color:var(--text-primary);font-weight:1000;font-size:22px;text-decoration:none;white-space:nowrap}.ms-room-name{display:flex;flex-direction:column;text-align:center;min-width:0}.ms-room-name strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ms-room-name small{letter-spacing:1px;color:var(--text-secondary);font-size:10px}.ms-mode-toggle{border:2px solid var(--ms-line);border-radius:20px;background:#D8C9A8;color:#303826;padding:9px 13px;cursor:pointer;font-weight:900;white-space:nowrap;box-shadow:2px 3px 0 var(--ms-line)}
 .meeting-header-actions{display:flex;gap:10px;align-items:center}.ms-room-name .recording-indicator{color:var(--color-danger);margin-top:4px}.ms-tools-sidebar{border:3px solid var(--ms-line);border-radius:17px;background:var(--bg-surface);box-shadow:4px 5px 0 var(--ms-line);display:flex;flex-direction:column;min-height:0;overflow:hidden}.ms-tools-sidebar>header{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:2px solid var(--ms-line);background:var(--bg-elevated)}.ms-tools-sidebar>header button{border:0;background:none;color:var(--text-primary);font-size:22px}.tools-content{overflow:auto;flex:1;min-height:0}.reaction-picker{padding:20px}.reaction-picker p{font-size:13px;color:var(--text-secondary)}.reaction-picker>div{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.reaction-picker button{font-size:30px;padding:9px;border:2px solid var(--ms-line);border-radius:12px;background:var(--bg-elevated)}.meeting-reactions{position:fixed;bottom:130px;left:25px;z-index:20;pointer-events:none;display:flex;gap:14px;flex-wrap:wrap;max-width:70vw}.meeting-reactions>div{display:grid;place-items:center;gap:4px;animation:reaction-in .3s ease-out}.meeting-reactions span{font-size:38px}.meeting-reactions small{background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-color);padding:2px 7px;border-radius:10px;max-width:100px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;font-size:10px}.end-dialog::backdrop{background:#182a2580}.end-dialog{padding:30px;width:calc(100% - 40px);max-width:480px;color:var(--text-primary)}.end-dialog h2{margin:0 0 15px}.end-dialog>div{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:12px;margin-top:25px}@keyframes reaction-in{from{transform:translateY(25px);opacity:0}to{transform:translateY(0);opacity:1}}

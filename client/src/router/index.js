@@ -7,6 +7,7 @@ import {
 import {
   awaitAuthReady,
   currentUser,
+  refreshEmailVerification,
 } from '../services/auth'
 
 import HomePage from '../views/HomePage.vue'
@@ -70,8 +71,20 @@ router.beforeEach(async (to) => {
   if (to.name === 'login' && currentUser.value) {
     return { name: 'account' }
   }
+  if ((to.name === 'lobby' || to.name === 'meeting') && currentUser.value && !currentUser.value.emailVerified) {
+    try {
+      if (!(await refreshEmailVerification())) {
+        toast.info('Buka link verifikasi dari emailmu sebelum bergabung memakai akun ini.')
+        return { name: 'account' }
+      }
+    } catch (error) { toast.error(error); return { name: 'account' } }
+  }
   if(to.meta.requiresAdmin || to.meta.requiresFullAccess){
     try{
+      if(!currentUser.value.emailVerified && !(await refreshEmailVerification())){
+        toast.info('Verifikasi alamat emailmu sebelum memakai fitur host atau admin.')
+        return {name:'account'}
+      }
       const profile=await loadAccount(true)
       if(to.meta.requiresAdmin && profile?.role!=='admin'){toast.error('Halaman ini hanya untuk admin.');return {name:'account'}}
       if(to.meta.requiresFullAccess && profile?.access!=='full'){toast.info('Akses membuat room menunggu persetujuan admin.');return {name:'account'}}

@@ -49,6 +49,7 @@ Di **Workers & Pages → meetspace-api → Settings → Variables & Secrets**, t
 | `CLIENT_ORIGIN` | Variable | Origin Pages yang tepat, contoh `https://<nama-project>.pages.dev` **tanpa `/` terakhir** |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Secret | Isi lengkap JSON service account Firebase, termasuk `private_key` |
 | `ADMIN_UIDS` | Variable | UID akun admin Firebase, dipisahkan koma bila lebih dari satu; untuk project saat ini: `sOmHt2pt9ygataiZL1RKyC1UKjm2` |
+| `RATE_LIMIT_SECRET` | Secret | String acak minimal 32 karakter, sama pada setiap deploy; digunakan untuk HMAC alamat IP pada counter Firestore. Jangan diganti rutin karena counter aktif akan ter-reset. |
 | `LIVEKIT_URL` | Variable | URL LiveKit, contoh `wss://<project>.livekit.cloud` |
 | `LIVEKIT_API_KEY` | Secret | API key LiveKit |
 | `LIVEKIT_API_SECRET` | Secret | API secret LiveKit |
@@ -56,6 +57,18 @@ Di **Workers & Pages → meetspace-api → Settings → Variables & Secrets**, t
 `FIRESTORE_PREFER_REST=true` sudah ada di `wrangler.jsonc`. Worker menggunakan transport REST agar operasi Firestore yang dipakai routes tidak membutuhkan gRPC atau pembuatan kode protobuf saat runtime Workers. Sumber Node lokal tetap memakai Firebase Admin biasa. Tidak perlu membuat D1/KV karena data aplikasi tetap di Firestore.
 
 Di Firebase Console → **Authentication → Settings → Authorized domains**, tambahkan hostname Pages tanpa `https://`, misalnya `<nama-project>.pages.dev`. Tambahkan juga domain custom jika nanti dipakai. Firebase Web config di Pages harus berasal dari project yang sama dengan service account Worker.
+
+Untuk verifikasi email, aktifkan **Authentication → Sign-in method → Email/Password** dan periksa template **Authentication → Templates → Email address verification**. MeetSpace membuat akun Firebase berstatus belum terverifikasi, lalu Firebase mengirim link verifikasi ke email pengguna melalui halaman tindakan bawaan Firebase. Setelah link dibuka, pengguna kembali ke halaman Akun dan menekan **Saya sudah verifikasi** jika status belum berubah. Login berikutnya cukup email dan password. Aktifkan juga provider **Google** di Firebase Authentication → Sign-in method; Google Sign-In memakai identitas email terverifikasi dari Google. Tambahkan hostname Pages, domain custom, dan `localhost` ke **Authorized domains** untuk Google Sign-In dan URL kembali dari link reset password. Akun email/password perlu menyelesaikan verifikasi sebelum bergabung atau memakai hak host, fasilitator, dan admin; tamu tanpa akun tetap melalui waiting room. [Verifikasi email Firebase](https://firebase.google.com/docs/auth/web/manage-users), [Google Sign-In Firebase](https://firebase.google.com/docs/auth/web/google-signin).
+
+Pengiriman link memakai Firebase Authentication langsung dari client dan handler email bawaan Firebase. Worker tidak memerlukan `EMAIL_FROM`, `RESEND_API_KEY`, maupun layanan pengirim email lain. Pengguna kembali sendiri ke halaman Akun setelah membuka link. [Mengelola pengguna dan verifikasi email Firebase](https://firebase.google.com/docs/auth/web/manage-users).
+
+### Reset password, migrasi MFA lama, dan rate limit
+
+Template **Authentication → Templates → Password reset** juga harus aktif. Tombol **Lupa password?** memakai email Firebase dan kembali ke `/login`; domain Pages/custom harus tetap ada di Authorized domains. Respons UI tidak mengungkap apakah email terdaftar. [Reset password Firebase](https://firebase.google.com/docs/auth/web/manage-users).
+
+Alur authenticator admin lama telah dihapus dari aplikasi. Jika akun admin **sudah pernah menyelesaikan pendaftaran TOTP di Firebase**, Firebase masih akan meminta faktor itu saat login. Dengan kredensial Admin untuk project yang benar, jalankan `cd server && npm run auth:remove-old-mfa` untuk memeriksa jumlah faktor, lalu `npm run auth:remove-old-mfa -- --apply` untuk menghapus semua faktor kedua pada UID di `ADMIN_UIDS`. Script ini memang menghapus seluruh faktor MFA pada akun tersebut; periksa daftar UID sebelum menerapkan. Akun admin yang belum pernah menyelesaikan TOTP tidak memerlukan migrasi.
+
+`RATE_LIMIT_SECRET` wajib ada sebelum memakai endpoint pendaftaran, pencarian Meeting ID, atau waiting room. Counter berada di koleksi Firestore `rateLimits` dan memakai hash HMAC IP. Worker sudah mengatur `RATE_LIMIT_TRUST_CF_IP=true` untuk memakai alamat IP dari Cloudflare. Jika API Node dijalankan langsung, biarkan variabel itu `false`; gunakan `true` hanya bila semua lalu lintas melewati Cloudflare. Terapkan kebijakan TTL Firestore untuk **collection group `rateLimits`**, field **`expiresAt`**, agar data lama dibersihkan. Batas aplikasi saat ini: formulir daftar **20/jam/IP**, lookup Meeting ID **30/5 menit/IP**, waiting room **8/10 menit/IP/room** dan **30/jam/IP** lintas room. API mengirim `429` dan `Retry-After` jika terlampaui, atau `503` jika secret/Firestore tidak tersedia. Pengiriman link verifikasi mengikuti batas Firebase Authentication. Endpoint pendaftaran hanya melindungi formulir MeetSpace; SDK Firebase masih bisa dipanggil langsung. Firebase memiliki [kuota autentikasi](https://firebase.google.com/docs/auth/limits); batas pendaftaran khusus yang tidak dapat dilewati memerlukan [Identity Platform `beforeCreate` blocking function](https://docs.cloud.google.com/identity-platform/docs/blocking-functions).
 
 ## 5. Hubungkan LiveKit
 
@@ -65,8 +78,8 @@ Di dashboard project LiveKit, tambahkan webhook URL `https://meetspace-api.<subd
 
 Lakukan dari dua browser/profil berbeda:
 
-1. Buka Pages, daftar/login, kemudian buka **Account**. Jika API `/api/account` mengembalikan `401`, periksa token Firebase dan kesamaan project Firebase Web dengan service account.
-2. Dengan UID admin di atas, buka dashboard admin. Berikan izin penuh kepada akun uji, lalu buat room. Akun yang belum diberi izin tetap boleh bergabung sebagai peserta sesuai aturan aplikasi.
+1. Buka Pages, daftar dengan email/password, buka link verifikasi Firebase, kembali ke **Akun** dan periksa status, lalu keluar dan masuk lagi tanpa verifikasi ulang. Coba **Lupa password?** dan link reset Firebase. Coba juga tombol Google setelah provider diaktifkan. Sebelum verifikasi, akun tidak dapat bergabung, membuat room, atau membuka dashboard admin. Jika API `/api/account` mengembalikan `401`, periksa token Firebase dan kesamaan project Firebase Web dengan service account.
+2. Dengan UID admin di atas, buka dashboard admin memakai akun yang emailnya terverifikasi. Jika akun lama masih meminta authenticator saat login, jalankan migrasi faktor lama di atas. Berikan izin penuh kepada akun uji, lalu buat room.
 3. Salin link dan Meeting ID angka. Buka sebagai peserta; uji password room, waiting room, approval, serta notifikasi host. ID yang tidak ada harus memberi `404` dari `/api/rooms/by-code/<10-digit-ID>` setelah Firestore berfungsi.
 4. Masuk ke meeting dari kedua browser: uji audio/video, chat, share screen, whiteboard, mood, game, watch party, serta Professional host controls. Cek webhook dan statistik admin setelah sesi selesai.
 5. Refresh URL `/meeting/...` di Pages. Cek **Worker Logs** jika route API `500/503` dan **Pages build logs** jika frontend gagal build.

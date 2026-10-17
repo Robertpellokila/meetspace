@@ -7,7 +7,7 @@ defineProps({ sharer: { type: Object, default: null }, livekitRoom: { type: Obje
   <section class="ms-share-stage">
     <div class="ms-stage-label">▣ {{ sharer?.name || 'Participant' }} is sharing</div>
     <div class="ms-share-video">
-      <ParticipantTile v-if="sharer" :key="sharer.id + '-screen'" :name="sharer.name + ' · Screen'" :video-track="sharer.screenTrack" :contain="true" />
+      <ParticipantTile v-if="sharer" :key="sharer.id + '-screen'" :name="sharer.name + ' · Screen'" :video-track="sharer.screenTrack" :mic-muted="sharer.micMuted ?? null" :contain="true" />
       <ShareAnnotation v-if="allowAnnotation && livekitRoom && sharer" :key="sharer.id" :room="livekitRoom" :sharer-id="sharer.id" />
     </div>
   </section>

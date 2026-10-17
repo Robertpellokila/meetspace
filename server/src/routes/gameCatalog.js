@@ -7,7 +7,7 @@ import { requireAdmin } from '../services/account.service.js'
 
 const router = Router()
 const collection = db.collection('gameCatalogOverrides')
-const native = new Set(['couple-quiz', 'truth-or-dare', 'tic-tac-toe', 'would-you-rather', 'memory-match'])
+const native = new Set(['couple-quiz', 'truth-or-dare', 'tic-tac-toe', 'would-you-rather', 'memory-match', 'date-bingo', 'emoji-decode', 'story-chain'])
 const builtinExternal = new Set(['playpager-word-puzzle', 'playpager-reversi', 'playpager-checkers'])
 const categories = new Set(['romantic', 'fun', 'competitive', 'coop'])
 const statuses = new Set(['available', 'coming-soon', 'disabled'])
